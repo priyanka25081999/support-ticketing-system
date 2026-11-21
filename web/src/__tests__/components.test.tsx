@@ -38,8 +38,8 @@ describe('RefreshControl', () => {
 
 describe('common components', () => {
   it('renders a status badge with readable text', () => {
-    render(<StatusBadge status="pending" />);
-    expect(screen.getByText('Pending')).toHaveClass('status-pending');
+    render(<StatusBadge status="in_progress" />);
+    expect(screen.getByText('In progress')).toHaveClass('status-in_progress');
   });
 
   it('shows API errors with a retry button', async () => {

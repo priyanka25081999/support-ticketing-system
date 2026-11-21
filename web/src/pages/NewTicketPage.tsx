@@ -119,7 +119,7 @@ export function NewTicketPage() {
         <LinkTicketPicker selected={linkedIds} onChange={setLinkedIds} />
       </fieldset>
 
-      <button className="btn btn-primary" disabled={create.isPending}>
+      <button type="submit" className="btn btn-primary btn-submit" disabled={create.isPending}>
         {create.isPending ? 'Submitting…' : 'Submit ticket'}
       </button>
     </form>

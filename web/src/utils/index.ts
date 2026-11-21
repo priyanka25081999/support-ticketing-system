@@ -69,8 +69,9 @@ export const humanize = (value: string) => {
 // Mirrors the backend state machine (api/internal/service/status_machine.go).
 // The server is the source of truth; this only decides which buttons to show.
 const transitions: Record<TicketStatus, TicketStatus[]> = {
-  open: ['pending', 'solved'],
-  pending: ['open', 'solved'],
+  open: ['in_progress', 'on_hold', 'solved'],
+  in_progress: ['open', 'on_hold', 'solved'],
+  on_hold: ['in_progress', 'open', 'solved'],
   solved: ['open', 'closed'],
   closed: [],
 };

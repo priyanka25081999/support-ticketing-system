@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -168,7 +169,7 @@ type AddMessageInput struct {
 	IsInternal bool   `json:"isInternal"`
 }
 
-// AddMessage adds a comment. A customer reply on a pending ticket moves it back to open.
+// AddMessage adds a comment. A customer reply on an on-hold ticket moves it back to in progress.
 func (s *TicketService) AddMessage(ctx context.Context, actor domain.Actor, idOrNumber string, in AddMessageInput) (domain.Message, error) {
 	t, err := s.loadAccessible(ctx, actor, idOrNumber)
 	if err != nil {
@@ -191,8 +192,8 @@ func (s *TicketService) AddMessage(ctx context.Context, actor domain.Actor, idOr
 		if err != nil {
 			return err
 		}
-		if actor.Role == domain.RoleCustomer && t.Status == domain.StatusPending {
-			return s.setStatus(ctx, tx, actor, t, domain.StatusOpen)
+		if actor.Role == domain.RoleCustomer && t.Status == domain.StatusOnHold {
+			return s.setStatus(ctx, tx, actor, t, domain.StatusInProgress)
 		}
 		return tx.TouchTicket(ctx, t.ID)
 	})
@@ -240,8 +241,8 @@ func (s *TicketService) Assign(ctx context.Context, actor domain.Actor, idOrNumb
 		return domain.TicketDetail{}, apperr.Conflict("Closed tickets cannot be reassigned")
 	}
 	assignee, err := s.repo.GetUserByID(ctx, strings.TrimSpace(assigneeID))
-	if errors.Is(err, repo.ErrNotFound) || (err == nil && !assignee.Role.IsStaff()) {
-		return domain.TicketDetail{}, apperr.Validation("Assignee must be an existing agent or admin")
+	if errors.Is(err, repo.ErrNotFound) || (err == nil && (!assignee.Role.IsStaff() || assignee.DeactivatedAt != nil)) {
+		return domain.TicketDetail{}, apperr.Validation("Assignee must be an active agent or admin")
 	}
 	if err != nil {
 		return domain.TicketDetail{}, err
@@ -314,9 +315,30 @@ func (s *TicketService) RemoveLink(ctx context.Context, actor domain.Actor, idOr
 	return nil
 }
 
-// ListAgents returns staff users for the reassign dropdown.
-func (s *TicketService) ListAgents(ctx context.Context) ([]domain.User, error) {
+// ListAgents returns active staff with their open workload.
+func (s *TicketService) ListAgents(ctx context.Context) ([]domain.StaffMember, error) {
 	return s.repo.ListStaff(ctx)
+}
+
+// RemoveAgent deactivates an agent (admin only). Their unclosed tickets go back
+// to the default admin so nothing is left unattended.
+func (s *TicketService) RemoveAgent(ctx context.Context, actor domain.Actor, agentID string) (int, error) {
+	if actor.Role != domain.RoleAdmin {
+		return 0, apperr.Forbidden("Only admins can remove agents")
+	}
+	var moved int
+	err := s.repo.InTx(ctx, func(tx repo.Repository) error {
+		admin, err := tx.GetDefaultAssignee(ctx)
+		if err != nil {
+			return errors.Join(errors.New("no default assignee configured"), err)
+		}
+		moved, err = tx.DeactivateAgent(ctx, strings.TrimSpace(agentID), admin.ID, admin.FullName, actor.ID)
+		if errors.Is(err, repo.ErrNotFound) {
+			return apperr.NotFound("Agent not found")
+		}
+		return err
+	})
+	return moved, err
 }
 
 // AutoClose closes solved tickets older than ReopenWindow.
@@ -363,14 +385,16 @@ func applyScope(actor domain.Actor, f *domain.TicketFilter) {
 }
 
 func validateFilter(f *domain.TicketFilter) error {
-	if f.Status != "" && !domain.IsOneOf(f.Status, domain.Statuses) {
-		return apperr.Validation("Invalid status filter")
-	}
-	if f.Type != "" && !domain.IsOneOf(f.Type, domain.Types) {
-		return apperr.Validation("Invalid type filter")
-	}
-	if f.Severity != "" && !domain.IsOneOf(f.Severity, domain.Severities) {
-		return apperr.Validation("Invalid severity filter")
+	for _, check := range []struct {
+		name    string
+		values  []string
+		allowed []string
+	}{{"status", f.Status, domain.Statuses}, {"type", f.Type, domain.Types}, {"severity", f.Severity, domain.Severities}} {
+		for _, v := range check.values {
+			if !domain.IsOneOf(v, check.allowed) {
+				return apperr.Validation(fmt.Sprintf("Invalid %s filter: %q", check.name, v))
+			}
+		}
 	}
 	f.Search = strings.TrimSpace(f.Search)
 	if len(f.Search) > 100 {
@@ -398,7 +422,7 @@ func (s *TicketService) setStatus(ctx context.Context, tx repo.Repository, actor
 	case domain.StatusSolved:
 		now := s.now()
 		solvedAt = &now
-	case domain.StatusOpen, domain.StatusPending:
+	case domain.StatusOpen, domain.StatusInProgress, domain.StatusOnHold:
 		solvedAt = nil
 	}
 	if err := tx.UpdateTicketStatus(ctx, t.ID, to, solvedAt); err != nil {

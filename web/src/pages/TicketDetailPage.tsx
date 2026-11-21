@@ -67,7 +67,8 @@ export function TicketDetailPage() {
     </button>
   );
 
-  if (ticketQuery.isLoading) return <p className="muted">Loading ticket…</p>;
+  // Skeleton keeps the layout stable while a ticket loads (no flash of text).
+  if (ticketQuery.isLoading) return <TicketSkeleton />;
   if (ticketQuery.error || !ticket || !user) {
     return (
       <>
@@ -204,20 +205,32 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 function ActionBar({ ticket, role, onDone, onComment, onChat }: { ticket: TicketDetail; role: Role; onDone: () => void; onComment: () => void; onChat: () => void }) {
   const statusMutation = useMutation({ mutationFn: (s: string) => ticketsApi.changeStatus(ticket.id, s), onSuccess: onDone });
   const options = nextStatuses(role, ticket.status);
+  const isStaff = role !== 'customer';
 
   return (
     <div className="action-bar">
+      {isStaff && (
+        <Select
+          label="Change status"
+          className="status-select"
+          value={ticket.status}
+          disabled={statusMutation.isPending || options.length === 0}
+          options={[ticket.status, ...options].map((s) => ({ value: s, label: s === ticket.status ? `Status: ${humanize(s)}` : `Move to ${humanize(s)}` }))}
+          onChange={(s) => statusMutation.mutate(s)}
+        />
+      )}
       <button className="btn btn-small btn-chat" onClick={onChat} title="Private live chat between reporter and assignee">
         💬 Chat
       </button>
       {ticket.status !== 'closed' && (
         <button className="btn btn-small" onClick={onComment}>📝 Comment</button>
       )}
-      {options.map((s) => (
-        <button key={s} className="btn btn-small" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate(s)}>
-          {role === 'customer' ? 'Reopen ticket' : humanize(s)}
-        </button>
-      ))}
+      {!isStaff &&
+        options.map((s) => (
+          <button key={s} className="btn btn-small" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate(s)}>
+            Reopen ticket
+          </button>
+        ))}
       {statusMutation.error && <ErrorMessage error={statusMutation.error} />}
     </div>
   );
@@ -246,7 +259,7 @@ function AssigneeSelect({ ticket, role, onDone }: { ticket: TicketDetail; role: 
           placeholder="Choose assignee…"
           value={ticket.assignee?.id ?? ''}
           disabled={assign.isPending || !agents.data}
-          options={(agents.data ?? []).map((a) => ({ value: a.id, label: `${a.fullName} (${a.role})` }))}
+          options={(agents.data ?? []).map((a) => ({ value: a.id, label: `${a.fullName} · ${a.role} · ${a.openTickets} open` }))}
           onChange={(v) => assign.mutate(v)}
         />
         {assign.error && <ErrorMessage error={assign.error} />}
@@ -389,5 +402,22 @@ function LinkedTickets({ ticket, canEdit, onDone }: { ticket: TicketDetail; canE
         <button className="btn btn-small" onClick={() => setOpen(true)}>+ Link previous ticket</button>
       ))}
     </section>
+  );
+}
+
+function TicketSkeleton() {
+  return (
+    <div className="card issue skeleton" aria-busy="true" aria-label="Loading ticket">
+      <div className="sk sk-line short" />
+      <div className="sk sk-title" />
+      <div className="sk sk-line" />
+      <div className="issue-grid">
+        <div>
+          <div className="sk sk-block" />
+          <div className="sk sk-block tall" />
+        </div>
+        <div className="sk sk-block tall" />
+      </div>
+    </div>
   );
 }

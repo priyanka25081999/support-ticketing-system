@@ -1,6 +1,6 @@
 import { api } from './client';
 import type {
-  Attachment, AuthResponse, ChatMessage, ChatThread, NotificationFeed, Enums, Message, Page, Summary, Ticket, TicketDetail, TicketFilters, TimelineItem, User,
+  Attachment, AuthResponse, ChatMessage, ChatThread, NotificationFeed, StaffMember, Enums, Message, Page, Summary, Ticket, TicketDetail, TicketFilters, TimelineItem, User,
 } from './types';
 
 /** Saves a downloaded file via a temporary object URL. */
@@ -83,7 +83,9 @@ export const metaApi = {
     const match = /filename="([^"]+)"/.exec(String(res.headers['content-disposition'] ?? ''));
     saveBlob(res.data, match?.[1] ?? 'tickets.csv');
   },
-  agents: () => api.get<User[]>('/agents').then((r) => r.data),
+  agents: () => api.get<StaffMember[]>('/agents').then((r) => r.data),
+  /** Deactivates an agent; their open tickets go back to the admin. */
+  removeAgent: (id: string) => api.delete<{ reassignedTickets: number }>(`/agents/${id}`).then((r) => r.data),
   createAgent: (fullName: string, email: string, password: string) =>
     api.post<User>('/agents', { fullName, email, password }).then((r) => r.data),
 };

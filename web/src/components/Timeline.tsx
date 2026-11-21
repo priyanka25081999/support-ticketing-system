@@ -35,7 +35,7 @@ export function CommentList({ items }: { items: TimelineItem[] }) {
             <span className="avatar" aria-hidden="true">{m!.author.name.charAt(0).toUpperCase()}</span>
             <strong>{m!.author.name}</strong>
             {m!.authorRole !== 'customer' && <span className="badge">{humanize(m!.authorRole)}</span>}
-            {m!.isInternal && <span className="badge status-pending">Internal note</span>}
+            {m!.isInternal && <span className="badge badge-internal">Internal note</span>}
             <span className="muted">{formatDate(m!.createdAt)}</span>
           </div>
           <p className="body">{m!.body}</p>

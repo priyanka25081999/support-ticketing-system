@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,9 +45,9 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("pageSize"))
 	filter := domain.TicketFilter{
-		Status:      q.Get("status"),
-		Type:        q.Get("type"),
-		Severity:    q.Get("severity"),
+		Status:      listParam(q, "status"),
+		Type:        listParam(q, "type"),
+		Severity:    listParam(q, "severity"),
 		Search:      q.Get("search"),
 		Sort:        q.Get("sort"),
 		Page:        page,
@@ -293,4 +295,23 @@ func (h *TicketHandler) ChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// listParam reads a multi-value filter given as ?status=open,on_hold or repeated ?status=open&status=on_hold.
+func listParam(q url.Values, key string) []string {
+	var out []string
+	for _, raw := range q[key] {
+		for _, v := range strings.Split(raw, ",") {
+			if v = strings.TrimSpace(v); v != "" && !slices.Contains(out, v) {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// RemoveAgent deactivates an agent and reassigns their open tickets to the admin.
+func (h *TicketHandler) RemoveAgent(w http.ResponseWriter, r *http.Request) {
+	moved, err := h.svc.RemoveAgent(r.Context(), mustActor(r), chi.URLParam(r, "id"))
+	respond(w, http.StatusOK, map[string]int{"reassignedTickets": moved}, err)
 }

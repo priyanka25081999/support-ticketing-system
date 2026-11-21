@@ -81,6 +81,9 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (AuthRe
 	if err != nil {
 		return AuthResult{}, err
 	}
+	if user.DeactivatedAt != nil {
+		return AuthResult{}, apperr.Unauthorized("This account has been deactivated")
+	}
 	return s.issueTokens(ctx, user)
 }
 
@@ -103,6 +106,9 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (AuthResult,
 	user, err := s.repo.GetUserByID(ctx, stored.UserID)
 	if err != nil {
 		return AuthResult{}, err
+	}
+	if user.DeactivatedAt != nil {
+		return AuthResult{}, apperr.Unauthorized("This account has been deactivated")
 	}
 	var result AuthResult
 	err = s.repo.InTx(ctx, func(tx repo.Repository) error {
@@ -132,7 +138,7 @@ func (s *AuthService) Logout(ctx context.Context, rawToken string) error {
 
 func (s *AuthService) Me(ctx context.Context, userID string) (domain.User, error) {
 	user, err := s.repo.GetUserByID(ctx, userID)
-	if errors.Is(err, repo.ErrNotFound) {
+	if errors.Is(err, repo.ErrNotFound) || (err == nil && user.DeactivatedAt != nil) {
 		return domain.User{}, apperr.Unauthorized("User no longer exists")
 	}
 	return user, err

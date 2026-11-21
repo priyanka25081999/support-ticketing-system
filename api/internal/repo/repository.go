@@ -55,7 +55,12 @@ type Repository interface {
 	CreateUser(ctx context.Context, u domain.User) (domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
 	GetUserByID(ctx context.Context, id string) (domain.User, error)
-	ListStaff(ctx context.Context) ([]domain.User, error)
+	// ListStaff returns active agents and admins with their open workload.
+	ListStaff(ctx context.Context) ([]domain.StaffMember, error)
+	// DeactivateAgent soft-deletes an agent, revokes their sessions and reassigns
+	// their unclosed tickets to reassignTo (logging an "assigned" event by actorID).
+	// Returns the number of reassigned tickets; ErrNotFound if not an active agent.
+	DeactivateAgent(ctx context.Context, agentID, reassignTo, reassignToName, actorID string) (int, error)
 	GetDefaultAssignee(ctx context.Context) (domain.User, error)
 	// EnsureDefaultAdmin creates the default admin if missing and marks it as default assignee.
 	EnsureDefaultAdmin(ctx context.Context, email, passwordHash, name string) error

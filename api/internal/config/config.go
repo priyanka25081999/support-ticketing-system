@@ -59,7 +59,7 @@ func Load() (*Config, error) {
 		CookieSecure:    getEnv("COOKIE_SECURE", "false") == "true",
 		AdminEmail:      os.Getenv("ADMIN_EMAIL"),
 		AdminPassword:   os.Getenv("ADMIN_PASSWORD"),
-		AdminName:       getEnv("ADMIN_NAME", "Default Admin"),
+		AdminName:       getEnv("ADMIN_NAME", "Admin"),
 		TLSCertFile:     os.Getenv("TLS_CERT_FILE"),
 		TLSKeyFile:      os.Getenv("TLS_KEY_FILE"),
 		DatabaseURL: BuildDatabaseURL(

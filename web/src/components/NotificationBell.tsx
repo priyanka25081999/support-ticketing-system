@@ -71,9 +71,11 @@ export function NotificationBell() {
           </div>
           {error && <div className="alert alert-error">{getErrorMessage(error)}</div>}
           {data && data.items.length === 0 && <p className="muted notif-empty">You're all caught up.</p>}
+          {unread > 0 && <div className="notif-section unread">New · {unread}</div>}
           <ul className="notif-list">
-            {data?.items.map((n) => (
+            {data?.items.map((n, i) => (
               <li key={`${n.kind}-${n.id}`}>
+                {!n.unread && (i === 0 || data.items[i - 1].unread) && <div className="notif-section">Earlier</div>}
                 <button className={`notif-item ${n.unread ? 'unread' : ''}`} onClick={() => openItem(n)}>
                   {n.unread && <span className="notif-dot" aria-label="Unread" />}
                   <span className="notif-text">

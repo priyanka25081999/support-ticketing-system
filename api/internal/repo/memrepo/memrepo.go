@@ -105,16 +105,52 @@ func (r *Repo) GetUserByID(_ context.Context, id string) (domain.User, error) {
 	return domain.User{}, repo.ErrNotFound
 }
 
-func (r *Repo) ListStaff(_ context.Context) ([]domain.User, error) {
+func (r *Repo) ListStaff(_ context.Context) ([]domain.StaffMember, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []domain.User
+	var out []domain.StaffMember
 	for _, u := range r.users {
-		if u.Role.IsStaff() {
-			out = append(out, u)
+		if u.Role.IsStaff() && u.DeactivatedAt == nil {
+			m := domain.StaffMember{User: u}
+			for _, t := range r.tickets {
+				if t.Assignee != nil && t.Assignee.ID == u.ID && t.Status != domain.StatusSolved && t.Status != domain.StatusClosed {
+					m.OpenTickets++
+				}
+			}
+			out = append(out, m)
 		}
 	}
 	return out, nil
+}
+
+func (r *Repo) DeactivateAgent(_ context.Context, agentID, reassignTo, reassignToName, actorID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u, ok := r.users[agentID]
+	if !ok || u.Role != domain.RoleAgent || u.DeactivatedAt != nil {
+		return 0, repo.ErrNotFound
+	}
+	now := r.Now()
+	u.DeactivatedAt = &now
+	r.users[agentID] = u
+	for hash, t := range r.tokens {
+		if t.UserID == agentID {
+			t.Revoked = true
+			r.tokens[hash] = t
+		}
+	}
+	moved := 0
+	for id, t := range r.tickets {
+		if t.Assignee != nil && t.Assignee.ID == agentID && t.Status != domain.StatusClosed {
+			t.Assignee = &domain.UserRef{ID: reassignTo, Name: reassignToName}
+			r.tickets[id] = t
+			r.events = append(r.events, domain.Event{ID: int64(len(r.events) + 1), TicketID: id, Type: domain.EventAssigned,
+				Actor: &domain.UserRef{ID: actorID, Name: r.users[actorID].FullName},
+				Data:  map[string]any{"assigneeId": reassignTo, "assigneeName": reassignToName, "reason": "agent removed"}, CreatedAt: now})
+			moved++
+		}
+	}
+	return moved, nil
 }
 
 func (r *Repo) GetDefaultAssignee(ctx context.Context) (domain.User, error) {
@@ -194,11 +230,17 @@ func (r *Repo) GetTicket(_ context.Context, idOrNumber string) (domain.Ticket, e
 func (r *Repo) matches(t domain.Ticket, f domain.TicketFilter) bool {
 	return (f.RequesterID == "" || t.Requester.ID == f.RequesterID) &&
 		(f.AssigneeID == "" || (t.Assignee != nil && t.Assignee.ID == f.AssigneeID)) &&
-		(f.Status == "" || string(t.Status) == f.Status) &&
-		(f.Type == "" || t.Type == f.Type) &&
-		(f.Severity == "" || t.Severity == f.Severity) &&
-		(f.Search == "" || strings.Contains(strings.ToLower(t.Subject), strings.ToLower(f.Search))) &&
+		(len(f.Status) == 0 || slices.Contains(f.Status, string(t.Status))) &&
+		(len(f.Type) == 0 || slices.Contains(f.Type, t.Type)) &&
+		(len(f.Severity) == 0 || slices.Contains(f.Severity, t.Severity)) &&
+		(f.Search == "" || matchesSearch(t, f.Search)) &&
 		inRange(t.CreatedAt, f)
+}
+
+func matchesSearch(t domain.Ticket, search string) bool {
+	s := strings.ToLower(search)
+	return strings.Contains(strings.ToLower(t.Subject), s) || strings.Contains(strings.ToLower(t.TicketNumber), s) ||
+		strings.Contains(strings.ReplaceAll(t.Type, "_", " "), s)
 }
 
 func inRange(ts time.Time, f domain.TicketFilter) bool {

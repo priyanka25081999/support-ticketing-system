@@ -1,11 +1,15 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
-import { formatDate } from '../utils';
+import { CSSProperties, FormEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
+/** Compact label so the trigger keeps a stable width, e.g. "21 Nov 08:32 → 21 Nov 14:32". */
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 import { RANGE_PRESETS, TimeRange, isPreset, rangeKey, shiftRange, toLocalInput } from '../utils/timeRange';
 
 function labelFor(range: TimeRange): string {
   if (isPreset(range)) return RANGE_PRESETS.find((p) => p.key === range.preset)?.label ?? 'All time';
-  return `${formatDate(range.from)} → ${formatDate(range.to)}`;
+  return `${shortDate(range.from)} → ${shortDate(range.to)}`;
 }
+
+const PANEL_WIDTH = 470;
 
 const ClockIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -21,8 +25,25 @@ export function TimeRangePicker({ value, onChange }: { value: TimeRange; onChang
   const [to, setTo] = useState('');
   const [error, setError] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
 
-  // Pre-fill the absolute inputs from the current range when opening.
+  // Keep the panel inside the viewport: align it with the picker's left edge,
+  // and shift it left only as much as needed when it would overflow on the right.
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    const margin = 8;
+    const rect = ref.current.getBoundingClientRect();
+    const width = Math.min(PANEL_WIDTH, window.innerWidth - margin * 2);
+    let left = 0;
+    const overflowRight = rect.left + width - (window.innerWidth - margin);
+    if (overflowRight > 0) left = -overflowRight;
+    if (rect.left + left < margin) left = margin - rect.left;
+    setPanelStyle({ left, width });
+  }, [open]);
+
+  // Pre-fill the absolute inputs when the panel opens. Depends on the range key (a string),
+  // not the object, so live re-renders never reset what the user is typing.
+  const key = rangeKey(value);
   useEffect(() => {
     if (!open) return;
     setError('');
@@ -35,7 +56,7 @@ export function TimeRangePicker({ value, onChange }: { value: TimeRange; onChang
       setFrom(toLocalInput(value.from));
       setTo(toLocalInput(value.to));
     }
-  }, [open, value]);
+  }, [open, key]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,7 +107,7 @@ export function TimeRangePicker({ value, onChange }: { value: TimeRange; onChang
       </div>
 
       {open && (
-        <div className="time-picker-panel" role="dialog" aria-label="Choose time range">
+        <div className="time-picker-panel" role="dialog" aria-label="Choose time range" style={panelStyle}>
           <form className="time-picker-abs" onSubmit={apply}>
             <strong>Absolute time range</strong>
             <label>

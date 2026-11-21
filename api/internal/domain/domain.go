@@ -20,15 +20,16 @@ func (r Role) IsStaff() bool { return r == RoleAgent || r == RoleAdmin }
 type Status string
 
 const (
-	StatusOpen    Status = "open"
-	StatusPending Status = "pending"
-	StatusSolved  Status = "solved"
-	StatusClosed  Status = "closed"
+	StatusOpen       Status = "open"
+	StatusInProgress Status = "in_progress"
+	StatusOnHold     Status = "on_hold" // waiting on the customer
+	StatusSolved     Status = "solved"
+	StatusClosed     Status = "closed"
 )
 
 // Allowed enum values; they mirror the Postgres enums in db/migrations.
 var (
-	Statuses   = []string{"open", "pending", "solved", "closed"}
+	Statuses   = []string{"open", "in_progress", "on_hold", "solved", "closed"}
 	Types      = []string{"technical", "billing", "account", "feature_request", "other"}
 	Severities = []string{"low", "medium", "high", "critical"}
 )
@@ -58,6 +59,14 @@ type User struct {
 	Role         Role      `json:"role"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"createdAt"`
+	// DeactivatedAt is set when an admin removes the user (soft delete).
+	DeactivatedAt *time.Time `json:"-"`
+}
+
+// StaffMember is an agent/admin with their current workload.
+type StaffMember struct {
+	User
+	OpenTickets int `json:"openTickets"` // open + in progress + on hold tickets assigned
 }
 
 // UserRef is a lightweight reference to a user shown in API responses.
@@ -139,9 +148,10 @@ type TimelineItem struct {
 
 // TicketFilter holds list filters. RequesterID/AssigneeID scope results by role.
 type TicketFilter struct {
-	Status      string
-	Type        string
-	Severity    string
+	// Multi-select filters: a ticket matches if its value is any of the listed ones.
+	Status      []string
+	Type        []string
+	Severity    []string
 	Search      string
 	Sort        string // newest | oldest | updated | severity
 	Page        int

@@ -115,24 +115,24 @@ func TestAccess_IsScopedByRole(t *testing.T) {
 
 func TestList_RejectsInvalidFilter(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.svc.List(context.Background(), f.admin, domain.TicketFilter{Status: "bogus"})
+	_, err := f.svc.List(context.Background(), f.admin, domain.TicketFilter{Status: []string{"open", "bogus"}})
 	assertCode(t, err, "VALIDATION_ERROR")
 }
 
-func TestAddMessage_CustomerReplyReopensPendingTicket(t *testing.T) {
+func TestAddMessage_CustomerReplyResumesOnHoldTicket(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	tk := f.create(t, f.alice, "Need help")
 
-	if _, err := f.svc.ChangeStatus(ctx, f.admin, tk.ID, domain.StatusPending); err != nil {
-		t.Fatalf("set pending: %v", err)
+	if _, err := f.svc.ChangeStatus(ctx, f.admin, tk.ID, domain.StatusOnHold); err != nil {
+		t.Fatalf("set on hold: %v", err)
 	}
 	if _, err := f.svc.AddMessage(ctx, f.alice, tk.ID, AddMessageInput{Body: "More info"}); err != nil {
 		t.Fatalf("reply: %v", err)
 	}
 	got, _ := f.svc.Get(ctx, f.alice, tk.ID)
-	if got.Status != domain.StatusOpen {
-		t.Fatalf("expected open after customer reply, got %s", got.Status)
+	if got.Status != domain.StatusInProgress {
+		t.Fatalf("expected in_progress after customer reply, got %s", got.Status)
 	}
 }
 
@@ -364,4 +364,54 @@ func TestNotifications_ScopeUnreadAndMarkRead(t *testing.T) {
 	if adminFeed.UnreadCount != 0 {
 		t.Fatalf("admin should have no unread: %+v", adminFeed)
 	}
+}
+
+func TestList_MultiSelectAndSearchByType(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a := f.create(t, f.alice, "Login broken")
+	f.create(t, f.alice, "Another")
+	f.svc.ChangeStatus(ctx, f.admin, a.ID, domain.StatusInProgress)
+
+	page, err := f.svc.List(ctx, f.admin, domain.TicketFilter{Status: []string{"open", "in_progress"}})
+	if err != nil || page.Total != 2 {
+		t.Fatalf("multi-status: %d (%v)", page.Total, err)
+	}
+	page, _ = f.svc.List(ctx, f.admin, domain.TicketFilter{Status: []string{"in_progress"}})
+	if page.Total != 1 {
+		t.Fatalf("in_progress only: %d", page.Total)
+	}
+	page, _ = f.svc.List(ctx, f.admin, domain.TicketFilter{Search: "techn"})
+	if page.Total != 2 {
+		t.Fatalf("search by type: %d", page.Total)
+	}
+}
+
+func TestRemoveAgent_ReassignsToAdminAndBlocksLogin(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	tk := f.create(t, f.alice, "Assigned to agent")
+	f.svc.Assign(ctx, f.admin, tk.ID, f.agent.ID)
+
+	_, err := f.svc.RemoveAgent(ctx, f.agent, f.agent.ID)
+	assertCode(t, err, "FORBIDDEN")
+	_, err = f.svc.RemoveAgent(ctx, f.admin, f.admin.ID) // admins can't be removed
+	assertCode(t, err, "NOT_FOUND")
+
+	moved, err := f.svc.RemoveAgent(ctx, f.admin, f.agent.ID)
+	if err != nil || moved != 1 {
+		t.Fatalf("remove agent: moved=%d err=%v", moved, err)
+	}
+	got, _ := f.svc.Get(ctx, f.admin, tk.ID)
+	if got.Assignee == nil || got.Assignee.ID != f.admin.ID {
+		t.Fatalf("ticket should be back with the admin: %+v", got.Assignee)
+	}
+	staff, _ := f.svc.ListAgents(ctx)
+	for _, m := range staff {
+		if m.ID == f.agent.ID {
+			t.Fatal("removed agent still listed")
+		}
+	}
+	_, err = f.svc.Assign(ctx, f.admin, tk.ID, f.agent.ID)
+	assertCode(t, err, "VALIDATION_ERROR")
 }

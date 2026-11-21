@@ -62,7 +62,9 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; }
 /* Badges */
 .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; background: #e5e7eb; color: #374151; }
 .status-open { background: #dbeafe; color: #1d4ed8; }
-.status-pending { background: #fef3c7; color: #b45309; }
+.status-in_progress { background: #ede9fe; color: #6d28d9; }
+.status-on_hold { background: #fef3c7; color: #b45309; }
+.badge-internal { background: #fef3c7; color: #b45309; }
 .status-solved { background: #dcfce7; color: #15803d; }
 .status-closed { background: #e5e7eb; color: #4b5563; }
 .severity-low { background: #f1f5f9; color: #475569; }
@@ -94,7 +96,8 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; }
 .stat { display: flex; flex-direction: column; color: inherit; }
 .stat-value { font-size: 2rem; font-weight: 700; }
 .stat-open { border-top: 4px solid #3b82f6; }
-.stat-pending { border-top: 4px solid #f59e0b; }
+.stat-in_progress { border-top: 4px solid #8b5cf6; }
+.stat-on_hold { border-top: 4px solid #f59e0b; }
 .stat-solved { border-top: 4px solid #22c55e; }
 .stat-closed { border-top: 4px solid #9ca3af; }
 .bar-row { display: grid; grid-template-columns: 130px 1fr 40px; align-items: center; gap: 0.5rem; padding: 0.3rem 0; color: inherit; }
@@ -329,3 +332,77 @@ input[type='checkbox']:focus-visible { outline: 2px solid var(--primary); outlin
 .chat-composer .alert { width: 100%; margin: 0; }
 .chat-readonly { margin: 0; padding: 0.75rem; font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--border); background: #fffbeb; }
 @media (max-width: 480px) { .chat-window { right: 8px; left: 8px; bottom: 8px; width: auto; } }
+
+/* ---------- Labelled filters ---------- */
+.filters { align-items: flex-end; gap: 0.75rem; }
+.filter-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.filter-field.grow { flex: 1 1 240px; }
+.filter-field.grow input { width: 100%; }
+.filter-label { font-size: 0.75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.filter-field .select { min-width: 160px; }
+.filter-field .select-narrow { min-width: 110px; }
+.clear-filters { align-self: flex-end; margin-bottom: 0.45rem; }
+.view-toggle { margin-left: 0; }
+input[type='search'] { min-height: 38px; }
+
+/* ---------- Multi-select ---------- */
+.select-trigger.has-value { border-color: #93c5fd; background: #f8fbff; }
+.select-count { background: var(--primary); color: #fff; border-radius: 999px; font-size: 0.7rem; font-weight: 700; min-width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; }
+.select-menu .multi-list { list-style: none; margin: 0; padding: 0; outline: none; }
+.select-option.multi { justify-content: flex-start; }
+.fake-check { width: 16px; height: 16px; border: 1.5px solid #cbd5e1; border-radius: 4px; flex-shrink: 0; position: relative; background: #fff; }
+.fake-check.on { background: var(--primary); border-color: var(--primary); }
+.fake-check.on::after { content: ''; position: absolute; left: 4.5px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.multi-clear { width: 100%; margin-top: 4px; padding: 0.4rem; border: none; border-top: 1px solid var(--border); background: none; color: var(--primary); font: inherit; font-size: 0.85rem; cursor: pointer; }
+
+/* ---------- No-flicker layout ---------- */
+.page-header { flex-wrap: wrap; }
+.page-header .toolbar { margin-left: auto; }
+.refresh-control { flex-wrap: nowrap; white-space: nowrap; }
+.updated-at { display: inline-block; min-width: 150px; font-variant-numeric: tabular-nums; }
+.time-picker-trigger { width: 250px; justify-content: space-between; }
+.time-picker-trigger span { flex: 1; text-align: left; }
+
+/* ---------- Status dropdown ---------- */
+.status-select { min-width: 190px; }
+.status-select .select-trigger { min-height: 32px; padding: 0.3rem 0.65rem; font-size: 0.88rem; font-weight: 600; }
+
+/* ---------- Notifications: read vs unread colours ---------- */
+.notif-section { padding: 0.4rem 1rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); background: #f8fafc; border-bottom: 1px solid var(--border); }
+.notif-section.unread { color: var(--primary); background: #eff6ff; }
+.notif-item.unread { background: #eff6ff; box-shadow: inset 3px 0 0 var(--primary); }
+.notif-item.unread .notif-text { color: #1e3a8a; font-weight: 600; }
+.notif-item.unread:hover { background: #e0ecff; }
+.notif-item:not(.unread) { background: #fff; }
+.notif-item:not(.unread) .notif-text { color: #4b5563; }
+.notif-item:not(.unread) .notif-preview { color: #9ca3af; }
+
+/* ---------- Agents page ---------- */
+.agents-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 1rem; align-items: start; }
+@media (max-width: 900px) { .agents-grid { grid-template-columns: 1fr; } }
+.agents-filters { margin-bottom: 0.75rem; }
+.role-admin { background: #ede9fe; color: #6d28d9; }
+.role-agent { background: #e0f2fe; color: #0369a1; }
+.actions-cell { text-align: right; white-space: nowrap; }
+.confirm { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--danger); }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-danger-outline { color: var(--danger); border-color: #fecaca; }
+.btn-danger-outline:hover { background: #fef2f2; }
+
+/* ---------- Skeleton ---------- */
+.sk { background: linear-gradient(90deg, #eef1f5 25%, #f6f8fa 37%, #eef1f5 63%); background-size: 400% 100%; animation: shimmer 1.2s ease infinite; border-radius: 6px; margin-bottom: 0.75rem; }
+.sk-line { height: 14px; width: 60%; }
+.sk-line.short { width: 120px; }
+.sk-title { height: 28px; width: 50%; }
+.sk-block { height: 90px; }
+.sk-block.tall { height: 220px; }
+@keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+/* ---------- Alignment fixes ---------- */
+.btn { justify-content: center; text-align: center; }
+/* Compact, centred primary action at the end of forms (e.g. Submit ticket). */
+.form > .btn-primary, .btn-submit { align-self: flex-start; min-width: 160px; min-height: 40px; padding: 0.55rem 1.4rem; font-weight: 600; }
+/* Range label centred inside a fixed-width trigger. */
+.time-picker-trigger span { text-align: center; }
+/* The panel is positioned in JS (left + width) so it always stays on screen. */
+.time-picker-panel { right: auto; max-width: calc(100vw - 16px); }

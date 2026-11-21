@@ -21,8 +21,10 @@ func TestCheckTransition(t *testing.T) {
 		solvedAt *time.Time
 		wantCode string // "" means allowed
 	}{
-		{"agent open->pending", domain.RoleAgent, "open", "pending", nil, ""},
-		{"agent pending->solved", domain.RoleAgent, "pending", "solved", nil, ""},
+		{"agent open->in_progress", domain.RoleAgent, "open", "in_progress", nil, ""},
+		{"agent in_progress->on_hold", domain.RoleAgent, "in_progress", "on_hold", nil, ""},
+		{"agent on_hold->solved", domain.RoleAgent, "on_hold", "solved", nil, ""},
+		{"in_progress cannot jump to closed", domain.RoleAdmin, "in_progress", "closed", nil, "INVALID_TRANSITION"},
 		{"agent cannot close", domain.RoleAgent, "solved", "closed", &recent, "FORBIDDEN"},
 		{"admin closes solved", domain.RoleAdmin, "solved", "closed", &recent, ""},
 		{"same status rejected", domain.RoleAdmin, "open", "open", nil, "INVALID_TRANSITION"},

@@ -6,6 +6,7 @@ import { ErrorMessage, Pagination, RefreshControl, SeverityBadge, StatusBadge } 
 import { useEnums, useTickets } from '../hooks/queries';
 import { useNotifications } from '../hooks/notifications';
 import { Select } from '../components/Select';
+import { MultiSelect } from '../components/MultiSelect';
 import { TimeRangePicker } from '../components/TimeRangePicker';
 import { TimeRange, readRange, writeRange } from '../utils/timeRange';
 import { formatDate, humanize } from '../utils';
@@ -71,25 +72,42 @@ export function TicketListPage() {
       </div>
 
       <div className="card filters">
-        <input
-          placeholder="Search subject or TKT-…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          aria-label="Search"
-        />
-        <FilterSelect label="Status" allLabel="All statuses" value={filters.status!} options={enums?.statuses ?? []} onChange={(v) => setFilter('status', v)} />
-        <FilterSelect label="Type" allLabel="All types" value={filters.type!} options={enums?.types ?? []} onChange={(v) => setFilter('type', v)} />
-        <FilterSelect label="Severity" allLabel="All severities" value={filters.severity!} options={enums?.severities ?? []} onChange={(v) => setFilter('severity', v)} />
-        <Select label="Sort" value={filters.sort!} options={SORT_OPTIONS} onChange={(v) => setFilter('sort', v)} />
-        <Select label="Page size" value={String(filters.pageSize)} options={PAGE_SIZE_OPTIONS} onChange={(v) => setFilter('pageSize', v)} />
-        <TimeRangePicker value={range} onChange={setRange} />
-        <div className="view-toggle">
-          <button className={`btn btn-small ${view === 'table' ? 'active' : ''}`} onClick={() => setView('table')}>Table</button>
-          <button className={`btn btn-small ${view === 'cards' ? 'active' : ''}`} onClick={() => setView('cards')}>Cards</button>
-        </div>
+        <Field label="Search" grow>
+          <input
+            type="search"
+            placeholder="Search by ticket number, subject or type…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            aria-label="Search"
+          />
+        </Field>
+        <Field label="Status">
+          <EnumMultiSelect label="Status" allLabel="All statuses" param="status" options={enums?.statuses ?? []} params={params} onChange={setFilter} />
+        </Field>
+        <Field label="Type">
+          <EnumMultiSelect label="Type" allLabel="All types" param="type" options={enums?.types ?? []} params={params} onChange={setFilter} />
+        </Field>
+        <Field label="Severity">
+          <EnumMultiSelect label="Severity" allLabel="All severities" param="severity" options={enums?.severities ?? []} params={params} onChange={setFilter} />
+        </Field>
+        <Field label="Created">
+          <TimeRangePicker value={range} onChange={setRange} />
+        </Field>
+        <Field label="Sort by">
+          <Select label="Sort" value={filters.sort!} options={SORT_OPTIONS} onChange={(v) => setFilter('sort', v)} />
+        </Field>
+        <Field label="Per page">
+          <Select label="Page size" className="select-narrow" value={String(filters.pageSize)} options={PAGE_SIZE_OPTIONS} onChange={(v) => setFilter('pageSize', v)} />
+        </Field>
+        <Field label="View">
+          <div className="view-toggle">
+            <button className={`btn btn-small ${view === 'table' ? 'active' : ''}`} onClick={() => setView('table')}>Table</button>
+            <button className={`btn btn-small ${view === 'cards' ? 'active' : ''}`} onClick={() => setView('cards')}>Cards</button>
+          </div>
+        </Field>
         {hasFilters && (
           <button
-            className="btn btn-small btn-link"
+            className="btn btn-small btn-link clear-filters"
             onClick={() => {
               setSearchInput('');
               setParams({}, { replace: true });
@@ -136,14 +154,28 @@ const SORT_OPTIONS = [
 ];
 const PAGE_SIZE_OPTIONS = [10, 20, 50].map((n) => ({ value: String(n), label: `${n} / page` }));
 
-/** Enum filter with an "All …" option. */
-function FilterSelect({ label, allLabel, value, options, onChange }: { label: string; allLabel: string; value: string; options: string[]; onChange: (v: string) => void }) {
+/** Labelled filter field. */
+function Field({ label, grow, children }: { label: string; grow?: boolean; children: React.ReactNode }) {
   return (
-    <Select
+    <div className={`filter-field ${grow ? 'grow' : ''}`}>
+      <span className="filter-label">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** Multi-select enum filter stored in the URL as a comma-separated list (e.g. ?status=open,on_hold). */
+function EnumMultiSelect({ label, allLabel, param, options, params, onChange }: {
+  label: string; allLabel: string; param: string; options: string[]; params: URLSearchParams; onChange: (key: string, value: string) => void;
+}) {
+  const values = (params.get(param) ?? '').split(',').filter(Boolean);
+  return (
+    <MultiSelect
       label={label}
-      value={value}
-      options={[{ value: '', label: allLabel }, ...options.map((o) => ({ value: o, label: humanize(o) }))]}
-      onChange={onChange}
+      allLabel={allLabel}
+      values={values}
+      options={options.map((o) => ({ value: o, label: humanize(o) }))}
+      onChange={(next) => onChange(param, next.join(','))}
     />
   );
 }

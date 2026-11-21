@@ -54,7 +54,10 @@ func NewRouter(d Deps) http.Handler {
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
 		httpx.WriteError(w, apperr.New(http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed"))
 	})
-	r.Get("/healthz", healthHandler(d.HealthCheck))
+	health := healthHandler(d.HealthCheck)
+	r.Get("/healthz", health)
+	r.Get("/healthcheck", health)
+	r.Get("/api/v1/healthcheck", health) // reachable through the web dev proxy too
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
@@ -99,23 +102,31 @@ func NewRouter(d Deps) http.Handler {
 				// Staff can list agents (for the reassign dropdown); only admins create them.
 				r.With(auth.RequireRole(domain.RoleAdmin, domain.RoleAgent)).Get("/", ticketH.ListAgents)
 				r.With(auth.RequireRole(domain.RoleAdmin)).Post("/", authH.CreateAgent)
+				r.With(auth.RequireRole(domain.RoleAdmin)).Delete("/{id}", ticketH.RemoveAgent)
 			})
 		})
 	})
 	return r
 }
 
+var startedAt = time.Now()
+
+// healthHandler reports API and database health (200 when healthy, 503 when the DB is down).
 func healthHandler(check func(ctx context.Context) error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		body := map[string]any{"status": "ok", "db": "up", "uptimeSeconds": int(time.Since(startedAt).Seconds())}
 		if check != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer cancel()
+			start := time.Now()
 			if err := check(ctx); err != nil {
-				httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "db": "down"})
+				body["status"], body["db"] = "degraded", "down"
+				httpx.WriteJSON(w, http.StatusServiceUnavailable, body)
 				return
 			}
+			body["dbLatencyMs"] = time.Since(start).Milliseconds()
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "db": "up"})
+		httpx.WriteJSON(w, http.StatusOK, body)
 	}
 }
 

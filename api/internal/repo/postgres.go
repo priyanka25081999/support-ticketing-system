@@ -63,11 +63,11 @@ func mapErr(err error) error {
 
 // ---------- Users ----------
 
-const userColumns = `id::text, email::text, password_hash, full_name, role::text, created_at`
+const userColumns = `id::text, email::text, password_hash, full_name, role::text, created_at, deactivated_at`
 
 func scanUser(row pgx.Row) (domain.User, error) {
 	var u domain.User
-	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &u.CreatedAt, &u.DeactivatedAt)
 	return u, mapErr(err)
 }
 
@@ -90,28 +90,64 @@ func (p *Postgres) GetDefaultAssignee(ctx context.Context) (domain.User, error) 
 	return scanUser(p.db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE is_default_assignee`))
 }
 
-func (p *Postgres) ListStaff(ctx context.Context) ([]domain.User, error) {
-	rows, err := p.db.Query(ctx,
-		`SELECT `+userColumns+` FROM users WHERE role IN ('agent', 'admin') ORDER BY full_name`)
+func (p *Postgres) ListStaff(ctx context.Context) ([]domain.StaffMember, error) {
+	rows, err := p.db.Query(ctx, `
+		SELECT `+userColumns+`,
+		       (SELECT count(*)::int FROM tickets t WHERE t.assignee_id = users.id AND t.status IN ('open', 'in_progress', 'on_hold'))
+		FROM users
+		WHERE role IN ('agent', 'admin') AND deactivated_at IS NULL
+		ORDER BY role DESC, full_name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	users := []domain.User{}
+	staff := []domain.StaffMember{}
 	for rows.Next() {
-		u, err := scanUser(rows)
-		if err != nil {
+		var m domain.StaffMember
+		if err := rows.Scan(&m.ID, &m.Email, &m.PasswordHash, &m.FullName, &m.Role, &m.CreatedAt, &m.DeactivatedAt, &m.OpenTickets); err != nil {
 			return nil, err
 		}
-		users = append(users, u)
+		staff = append(staff, m)
 	}
-	return users, rows.Err()
+	return staff, rows.Err()
+}
+
+func (p *Postgres) DeactivateAgent(ctx context.Context, agentID, reassignTo, reassignToName, actorID string) (int, error) {
+	tag, err := p.db.Exec(ctx,
+		`UPDATE users SET deactivated_at = now()
+		 WHERE id = $1::uuid AND role = 'agent' AND deactivated_at IS NULL`, agentID)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrNotFound
+	}
+	if _, err := p.db.Exec(ctx, `UPDATE refresh_tokens SET revoked = true WHERE user_id = $1::uuid`, agentID); err != nil {
+		return 0, err
+	}
+	// Reassign unclosed tickets and log one "assigned" event per ticket.
+	tag, err = p.db.Exec(ctx, `
+		WITH moved AS (
+		  UPDATE tickets SET assignee_id = $2::uuid, updated_at = now()
+		  WHERE assignee_id = $1::uuid AND status <> 'closed'
+		  RETURNING id
+		)
+		INSERT INTO ticket_events (ticket_id, actor_id, type, data)
+		SELECT id, $3::uuid, 'assigned',
+		       jsonb_build_object('assigneeId', $2::text, 'assigneeName', $4::text, 'reason', 'agent removed')
+		FROM moved`, agentID, reassignTo, actorID, reassignToName)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (p *Postgres) EnsureDefaultAdmin(ctx context.Context, email, passwordHash, name string) error {
+	// The display name always follows ADMIN_NAME; the password is only set on first creation.
 	if _, err := p.db.Exec(ctx,
 		`INSERT INTO users (email, password_hash, full_name, role)
-		 VALUES ($1, $2, $3, 'admin') ON CONFLICT (email) DO NOTHING`,
+		 VALUES ($1, $2, $3, 'admin')
+		 ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name`,
 		email, passwordHash, name); err != nil {
 		return err
 	}
@@ -211,17 +247,18 @@ func buildWhere(f domain.TicketFilter) (string, []any) {
 	if f.AssigneeID != "" {
 		add("t.assignee_id = ?::uuid", f.AssigneeID)
 	}
-	if f.Status != "" {
-		add("t.status = ?::ticket_status", f.Status)
+	if len(f.Status) > 0 {
+		add("t.status::text = ANY(?::text[])", f.Status)
 	}
-	if f.Type != "" {
-		add("t.type = ?::ticket_type", f.Type)
+	if len(f.Type) > 0 {
+		add("t.type::text = ANY(?::text[])", f.Type)
 	}
-	if f.Severity != "" {
-		add("t.severity = ?::ticket_severity", f.Severity)
+	if len(f.Severity) > 0 {
+		add("t.severity::text = ANY(?::text[])", f.Severity)
 	}
 	if f.Search != "" {
-		add("(t.subject ILIKE ? OR t.ticket_number ILIKE ?)", "%"+escapeLike(f.Search)+"%")
+		// Matches ticket number, subject or type ("feature request" matches feature_request).
+		add("(t.subject ILIKE ? OR t.ticket_number ILIKE ? OR replace(t.type::text, '_', ' ') ILIKE ?)", "%"+escapeLike(f.Search)+"%")
 	}
 	if f.CreatedFrom != nil {
 		add("t.created_at >= ?", *f.CreatedFrom)

@@ -1,7 +1,7 @@
 // API types mirroring the Go backend JSON responses.
 
 export type Role = 'customer' | 'agent' | 'admin';
-export type TicketStatus = 'open' | 'pending' | 'solved' | 'closed';
+export type TicketStatus = 'open' | 'in_progress' | 'on_hold' | 'solved' | 'closed';
 
 export interface User {
   id: string;
@@ -9,6 +9,10 @@ export interface User {
   fullName: string;
   role: Role;
   createdAt: string;
+}
+
+export interface StaffMember extends User {
+  openTickets: number;
 }
 
 export interface UserRef {

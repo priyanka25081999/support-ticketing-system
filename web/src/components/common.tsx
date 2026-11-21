@@ -50,10 +50,10 @@ export function RefreshControl({ isFetching, updatedAt, onRefresh }: RefreshCont
       <span className={`live-pill ${live ? 'on' : ''}`} title={live ? `Auto-refresh every ${current?.label}` : 'Auto-refresh is off'}>
         <span className={live ? 'live-dot on' : 'live-dot'} /> {live ? 'Live' : 'Paused'}
       </span>
-      {updatedAt > 0 && <span className="muted">Updated {formatTime(updatedAt)}</span>}
+      <span className="muted updated-at">{updatedAt > 0 ? `Updated ${formatTime(updatedAt)}` : ''}</span>
       <div className="btn-group">
         <button className="btn btn-small" onClick={onRefresh} disabled={isFetching} aria-label="Refresh now" title="Refresh now">
-          <RefreshIcon spinning={isFetching} /> {isFetching ? 'Refreshing…' : 'Refresh'}
+          <RefreshIcon spinning={isFetching} /> Refresh
         </button>
         <Select
           className="select-compact"

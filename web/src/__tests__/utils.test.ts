@@ -16,6 +16,11 @@ describe('getErrorMessage', () => {
 });
 
 describe('nextStatuses', () => {
+  it('offers the in-progress / on-hold workflow to staff', () => {
+    expect(nextStatuses('agent', 'open')).toEqual(['in_progress', 'on_hold', 'solved']);
+    expect(nextStatuses('agent', 'on_hold')).toEqual(['in_progress', 'open', 'solved']);
+  });
+
   it('lets admins close solved tickets but not agents', () => {
     expect(nextStatuses('admin', 'solved')).toEqual(['open', 'closed']);
     expect(nextStatuses('agent', 'solved')).toEqual(['open']);

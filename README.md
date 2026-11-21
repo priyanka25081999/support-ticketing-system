@@ -66,6 +66,8 @@ web/src/                React SPA                                   <- frontend
 
 **Ticket page:** the ticket number, subject and actions (Comment and status changes) sit at the top. The main column shows Type, Status and Severity, then the read-only Description, Attachments (drag and drop or browse), and Activity with separate **Comments** and **History** tabs. The sidebar shows Assignee (with reassignment for staff), Reporter, notification emails, Created and Updated dates, and Linked tickets. All times show the timezone (e.g. `21 Nov 2026, 12:41 IST`). **Back** returns to the page you came from.
 
+**Agents (admin):** the Agents page lists every active agent and admin with their count of open tickets, with search by name or email and a role filter. **Remove** deactivates an agent (soft delete, so names stay in ticket history). Their sessions are revoked, they can no longer sign in, and their unclosed tickets go back to the admin. Admins can't be removed.
+
 **UI features:** filters (status, type, severity, search) and sorting are kept in the URL, with a table/card view toggle and pagination. **Live refresh** is on by default (every 10 s, plus a refetch when the window regains focus) and can be switched off; a **Refresh** button refreshes on demand. The dashboard is scoped by role: admins see all tickets, agents see their assigned tickets, customers see their own. Errors show inline with a Retry button, and an error boundary catches render crashes.
 
 ---
@@ -134,20 +136,27 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> open : created (auto-assigned to default admin)
-    open --> pending : agent waiting on customer
-    pending --> open : customer replies
-    open --> solved : agent resolves
-    pending --> solved
+    [*] --> open : created (auto-assigned to the admin)
+    open --> in_progress : agent starts working
+    open --> on_hold
+    in_progress --> on_hold : waiting on customer
+    on_hold --> in_progress : customer replies (automatic) / agent resumes
+    in_progress --> open
+    on_hold --> open
+    open --> solved
+    in_progress --> solved
+    on_hold --> solved
     solved --> open : customer reopens (within 7 days)
     solved --> closed : auto after 7 days / admin closes
     closed --> [*]
 ```
 
-**Why these states:** I kept the standard Zendesk states.
+**Statuses:** `open`, `in_progress`, `on_hold`, `solved`, `closed`.
 
-- `pending` means the agent is waiting on the customer. When the customer replies, the ticket goes back to `open` automatically.
+- `in_progress` means an agent is actively working on the ticket.
+- `on_hold` means the agent is waiting on the customer. When the customer replies, the ticket moves back to `in_progress` automatically.
 - `solved` can be reopened. `closed` is final, so a recurring problem is handled with a **new ticket linked to the old one**.
+- Agents can make any change except closing; only admins close tickets. Agents and admins change status from a dropdown on the ticket page.
 
 Every status change is written to `ticket_events`, which feeds the timeline shown in the UI.
 
@@ -221,7 +230,7 @@ erDiagram
 
 ```sql
 CREATE TYPE user_role       AS ENUM ('customer','agent','admin');
-CREATE TYPE ticket_status   AS ENUM ('open','pending','solved','closed');
+CREATE TYPE ticket_status   AS ENUM ('open','in_progress','on_hold','solved','closed');  -- see migration 000006
 CREATE TYPE ticket_type     AS ENUM ('technical','billing','account','feature_request','other');
 CREATE TYPE ticket_severity AS ENUM ('low','medium','high','critical');
 CREATE TYPE event_type      AS ENUM ('created','assigned','status_changed','message_added','linked');
@@ -314,7 +323,7 @@ CREATE TABLE refresh_tokens (
 | GET    | `/me`                                    | auth                                | Current user                                                                 |
 | GET    | `/meta/enums`                            | auth                                | Ticket types, severities, statuses                                           |
 | POST   | `/tickets`                               | customer                            | Create a ticket (auto-assigned to the default admin)                         |
-| GET    | `/tickets?status=&type=&severity=&page=` | auth                                | Customers see their own tickets, agents see assigned tickets, admins see all |
+| GET    | `/tickets?status=&type=&severity=&search=&createdFrom=&createdTo=&page=` | auth | Multi-select filters as comma lists (e.g. `status=open,pending`); search matches ticket number, subject or type. Customers see their own tickets, agents see assigned tickets, admins see all |
 | GET    | `/tickets/{id}`                          | owner/agent                         | Ticket details plus linked tickets                                           |
 | GET    | `/tickets/{id}/timeline`                 | owner/agent                         | Messages and events in order (internal notes are hidden from customers)      |
 | POST   | `/tickets/{id}/messages`                 | owner/agent                         | Add a comment                                                                |
@@ -324,6 +333,8 @@ CREATE TABLE refresh_tokens (
 | DELETE | `/tickets/{id}/links/{linkedId}`         | owner                               | Remove a link                                                                |
 | GET    | `/agents`                                | admin / agent                       | List of agents for the reassign dropdown                                     |
 | POST   | `/agents`                                | admin                               | Create an agent account                                                      |
+| DELETE | `/agents/{id}`                           | admin                               | Remove (deactivate) an agent; their unclosed tickets are reassigned to the admin |
+| GET    | `/healthcheck` (also `/healthz`, `/api/v1/healthcheck`) | public               | `{status, db, dbLatencyMs, uptimeSeconds}`; returns 503 if the database is down |
 | POST   | `/tickets/{id}/attachments`              | owner/agent                         | Upload one file (`multipart/form-data`, field `file`, max 5 MB, 10 per ticket) |
 | GET    | `/tickets/{id}/attachments/{attId}`      | owner/agent                         | Download a file (always served as an attachment)                             |
 | GET    | `/reports/summary`                       | auth                                | Dashboard counts by status/severity/type + recent tickets (role-scoped)      |

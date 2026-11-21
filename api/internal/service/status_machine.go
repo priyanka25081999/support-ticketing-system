@@ -15,10 +15,11 @@ const ReopenWindow = 7 * 24 * time.Hour
 
 // transitions is the ticket state machine (README §4).
 var transitions = map[domain.Status][]domain.Status{
-	domain.StatusOpen:    {domain.StatusPending, domain.StatusSolved},
-	domain.StatusPending: {domain.StatusOpen, domain.StatusSolved},
-	domain.StatusSolved:  {domain.StatusOpen, domain.StatusClosed},
-	domain.StatusClosed:  {}, // final
+	domain.StatusOpen:       {domain.StatusInProgress, domain.StatusOnHold, domain.StatusSolved},
+	domain.StatusInProgress: {domain.StatusOpen, domain.StatusOnHold, domain.StatusSolved},
+	domain.StatusOnHold:     {domain.StatusInProgress, domain.StatusOpen, domain.StatusSolved},
+	domain.StatusSolved:     {domain.StatusOpen, domain.StatusClosed},
+	domain.StatusClosed:     {}, // final
 }
 
 // CheckTransition validates a status change for the given role.

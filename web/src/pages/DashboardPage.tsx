@@ -53,7 +53,6 @@ export function DashboardPage() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const isStaff = user?.role === 'admin' || user?.role === 'agent';
-  const scope = user?.role === 'admin' ? 'All tickets' : user?.role === 'agent' ? 'Tickets assigned to you' : 'Your tickets';
 
   const setRange = (r: TimeRange) => setParams(writeRange(params, r, DEFAULT_RANGE), { replace: true });
 
@@ -72,10 +71,7 @@ export function DashboardPage() {
   return (
     <>
       <div className="page-header">
-        <div>
-          <h1>Dashboard</h1>
-          <p className="muted">{scope} · created in the selected range</p>
-        </div>
+        <h1>Dashboard</h1>
         <div className="toolbar">
           <TimeRangePicker value={range} onChange={setRange} />
           <RefreshControl isFetching={isFetching} updatedAt={dataUpdatedAt} onRefresh={() => refetch()} />
@@ -101,6 +97,13 @@ export function DashboardPage() {
             <Kpi label="Avg. resolution" value={formatDuration(data.avgResolutionHours)} tone="time" hint="Average time from creation to Solved" />
           </div>
 
+
+
+          <div className="grid-2">
+            <BreakdownCard title="By severity" counts={data.bySeverity} filterKey="severity" />
+            <BreakdownCard title="By type" counts={data.byType} filterKey="type" />
+          </div>
+
           <section className="card">
             <div className="row space-between">
               <h3>Created vs resolved</h3>
@@ -108,20 +111,6 @@ export function DashboardPage() {
             </div>
             <TrendChart points={data.trend} bucket={data.bucket} />
           </section>
-
-          <div className="stats">
-            {Object.entries(data.byStatus).map(([status, count]) => (
-              <Link key={status} to={`/tickets?status=${status}`} className={`stat card stat-${status}`}>
-                <span className="stat-value">{count}</span>
-                <span className="muted">{humanize(status)} now</span>
-              </Link>
-            ))}
-          </div>
-
-          <div className="grid-2">
-            <BreakdownCard title="By severity" counts={data.bySeverity} filterKey="severity" />
-            <BreakdownCard title="By type" counts={data.byType} filterKey="type" />
-          </div>
 
           <section className="card">
             <h3>Recently updated</h3>
