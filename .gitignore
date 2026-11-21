@@ -1,0 +1,6 @@
+.env
+node_modules/
+dist/
+coverage/
+api/bin/
+.DS_Store

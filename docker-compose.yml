@@ -1,0 +1,23 @@
+# Local PostgreSQL for development. The API runs migrations from ./db/migrations on startup.
+#   docker compose up -d db
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ticketing_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-ticketing}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ticketing}
+      POSTGRES_DB: ${DB_NAME:-ticketing}
+    ports:
+      - "${DB_PORT:-5435}:5432"
+    volumes:
+      - ticketing_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ticketing_pgdata:
