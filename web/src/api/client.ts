@@ -60,3 +60,20 @@ api.interceptors.response.use(
     }
   },
 );
+
+/**
+ * Opens the chat Server-Sent Events stream with fetch (EventSource can't send
+ * an Authorization header). Retries once after refreshing an expired token.
+ */
+export async function openChatStream(ticketId: string, signal: AbortSignal): Promise<Response> {
+  const request = () =>
+    fetch(`/api/v1/tickets/${encodeURIComponent(ticketId)}/chat/stream`, {
+      headers: { Accept: 'text/event-stream', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+      credentials: 'include',
+      signal,
+    });
+  const res = await request();
+  if (res.status !== 401) return res;
+  await refreshSession();
+  return request();
+}

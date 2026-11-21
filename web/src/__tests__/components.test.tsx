@@ -12,27 +12,27 @@ jest.mock('../auth/AuthContext', () => ({ useAuth: () => mockUseAuth() }));
 describe('RefreshControl', () => {
   beforeEach(() => localStorage.clear());
 
-  it('is live by default and can be toggled off (persisted)', async () => {
+  it('auto-refreshes every 10s by default and can be switched off (persisted)', async () => {
     render(
       <LiveRefreshProvider>
         <RefreshControl isFetching={false} updatedAt={Date.now()} onRefresh={() => {}} />
       </LiveRefreshProvider>,
     );
-    const toggle = screen.getByRole('checkbox');
-    expect(toggle).toBeChecked();
-    await userEvent.click(toggle);
-    expect(toggle).not.toBeChecked();
-    expect(localStorage.getItem('liveRefresh')).toBe('off');
+    expect(screen.getByText('Live')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Auto refresh: 10s' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Off' }));
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(localStorage.getItem('refreshIntervalMs')).toBe('0');
   });
 
   it('calls onRefresh and disables the button while fetching', async () => {
     const onRefresh = jest.fn();
     const { rerender } = render(<RefreshControl isFetching={false} updatedAt={0} onRefresh={onRefresh} />);
-    await userEvent.click(screen.getByRole('button', { name: /refresh/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh now' }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     rerender(<RefreshControl isFetching updatedAt={0} onRefresh={onRefresh} />);
-    expect(screen.getByRole('button', { name: /refreshing/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh now' })).toBeDisabled();
   });
 });
 

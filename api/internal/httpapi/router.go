@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,7 +39,7 @@ func NewRouter(d Deps) http.Handler {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, recoverJSON)
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(timeoutExceptStreams(30 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{d.CORSOrigin},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
@@ -71,6 +72,9 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/me", authH.Me)
 			r.Get("/meta/enums", ticketH.Enums)
 			r.Get("/reports/summary", ticketH.Summary)
+			r.With(auth.RequireRole(domain.RoleAdmin, domain.RoleAgent)).Get("/reports/export", ticketH.Export)
+			r.Get("/notifications", ticketH.Notifications)
+			r.Post("/notifications/read", ticketH.MarkNotificationsRead)
 
 			r.Route("/tickets", func(r chi.Router) {
 				r.With(auth.RequireRole(domain.RoleCustomer)).Post("/", ticketH.Create)
@@ -85,6 +89,9 @@ func NewRouter(d Deps) http.Handler {
 					r.Delete("/links/{linkedId}", ticketH.RemoveLink)
 					r.Post("/attachments", ticketH.UploadAttachment)
 					r.Get("/attachments/{attachmentId}", ticketH.DownloadAttachment)
+					r.Get("/chat", ticketH.ChatThread)
+					r.Post("/chat", ticketH.SendChat)
+					r.Get("/chat/stream", ticketH.ChatStream)
 				})
 			})
 
@@ -109,6 +116,22 @@ func healthHandler(check func(ctx context.Context) error) http.HandlerFunc {
 			}
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "db": "up"})
+	}
+}
+
+// timeoutExceptStreams applies a request timeout to everything except
+// long-lived Server-Sent Events streams.
+func timeoutExceptStreams(d time.Duration) func(http.Handler) http.Handler {
+	timeout := middleware.Timeout(d)
+	return func(next http.Handler) http.Handler {
+		withTimeout := timeout(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/chat/stream") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			withTimeout.ServeHTTP(w, r)
+		})
 	}
 }
 

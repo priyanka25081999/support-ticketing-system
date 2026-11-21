@@ -4,6 +4,10 @@ import type { Ticket, TicketFilters } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage, Pagination, RefreshControl, SeverityBadge, StatusBadge } from '../components/common';
 import { useEnums, useTickets } from '../hooks/queries';
+import { useNotifications } from '../hooks/notifications';
+import { Select } from '../components/Select';
+import { TimeRangePicker } from '../components/TimeRangePicker';
+import { TimeRange, readRange, writeRange } from '../utils/timeRange';
 import { formatDate, humanize } from '../utils';
 
 type ViewMode = 'table' | 'cards';
@@ -27,7 +31,10 @@ export function TicketListPage() {
     page: Number(params.get('page')) || 1,
     pageSize: Number(params.get('pageSize')) || 20,
   };
-  const { data, error, isLoading, isFetching, dataUpdatedAt, refetch } = useTickets(filters);
+  const range = readRange(params, 'all');
+  const { data, error, isLoading, isFetching, dataUpdatedAt, refetch } = useTickets(filters, range);
+  const { data: notifications } = useNotifications();
+  const unreadIds = new Set(notifications?.unreadTicketIds ?? []);
 
   /** Updates one filter and resets to page 1 (unless changing the page itself). */
   const setFilter = (key: string, value: string) => {
@@ -48,7 +55,13 @@ export function TicketListPage() {
 
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
 
-  const hasFilters = ['status', 'type', 'severity', 'search'].some((k) => params.get(k));
+  const setRange = (r: TimeRange) => {
+    const next = writeRange(params, r, 'all');
+    next.delete('page');
+    setParams(next, { replace: true });
+  };
+
+  const hasFilters = ['status', 'type', 'severity', 'search', 'range', 'from'].some((k) => params.get(k));
 
   return (
     <>
@@ -64,20 +77,12 @@ export function TicketListPage() {
           onChange={(e) => setSearchInput(e.target.value)}
           aria-label="Search"
         />
-        <Select label="Statuses" value={filters.status!} options={enums?.statuses ?? []} onChange={(v) => setFilter('status', v)} />
-        <Select label="Types" value={filters.type!} options={enums?.types ?? []} onChange={(v) => setFilter('type', v)} />
-        <Select label="Severities" value={filters.severity!} options={enums?.severities ?? []} onChange={(v) => setFilter('severity', v)} />
-        <select aria-label="Sort" value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}>
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="updated">Recently updated</option>
-          <option value="severity">Highest severity</option>
-        </select>
-        <select aria-label="Page size" value={filters.pageSize} onChange={(e) => setFilter('pageSize', e.target.value)}>
-          {[10, 20, 50].map((n) => (
-            <option key={n} value={n}>{n} / page</option>
-          ))}
-        </select>
+        <FilterSelect label="Status" allLabel="All statuses" value={filters.status!} options={enums?.statuses ?? []} onChange={(v) => setFilter('status', v)} />
+        <FilterSelect label="Type" allLabel="All types" value={filters.type!} options={enums?.types ?? []} onChange={(v) => setFilter('type', v)} />
+        <FilterSelect label="Severity" allLabel="All severities" value={filters.severity!} options={enums?.severities ?? []} onChange={(v) => setFilter('severity', v)} />
+        <Select label="Sort" value={filters.sort!} options={SORT_OPTIONS} onChange={(v) => setFilter('sort', v)} />
+        <Select label="Page size" value={String(filters.pageSize)} options={PAGE_SIZE_OPTIONS} onChange={(v) => setFilter('pageSize', v)} />
+        <TimeRangePicker value={range} onChange={setRange} />
         <div className="view-toggle">
           <button className={`btn btn-small ${view === 'table' ? 'active' : ''}`} onClick={() => setView('table')}>Table</button>
           <button className={`btn btn-small ${view === 'cards' ? 'active' : ''}`} onClick={() => setView('cards')}>Cards</button>
@@ -111,7 +116,11 @@ export function TicketListPage() {
 
       {data && data.items.length > 0 && (
         <>
-          {view === 'table' ? <TicketTable tickets={data.items} showRequester={isStaff} /> : <TicketCards tickets={data.items} />}
+          {view === 'table' ? (
+            <TicketTable tickets={data.items} showRequester={isStaff} unreadIds={unreadIds} />
+          ) : (
+            <TicketCards tickets={data.items} unreadIds={unreadIds} />
+          )}
           <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onChange={(p) => setFilter('page', String(p))} />
         </>
       )}
@@ -119,18 +128,30 @@ export function TicketListPage() {
   );
 }
 
-function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+const SORT_OPTIONS = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'updated', label: 'Recently updated' },
+  { value: 'severity', label: 'Highest severity' },
+];
+const PAGE_SIZE_OPTIONS = [10, 20, 50].map((n) => ({ value: String(n), label: `${n} / page` }));
+
+/** Enum filter with an "All …" option. */
+function FilterSelect({ label, allLabel, value, options, onChange }: { label: string; allLabel: string; value: string; options: string[]; onChange: (v: string) => void }) {
   return (
-    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">All {label.toLowerCase()}</option>
-      {options.map((o) => (
-        <option key={o} value={o}>{humanize(o)}</option>
-      ))}
-    </select>
+    <Select
+      label={label}
+      value={value}
+      options={[{ value: '', label: allLabel }, ...options.map((o) => ({ value: o, label: humanize(o) }))]}
+      onChange={onChange}
+    />
   );
 }
 
-function TicketTable({ tickets, showRequester }: { tickets: Ticket[]; showRequester: boolean }) {
+/** Blue dot for tickets with activity the user hasn't seen yet. */
+const UnreadDot = () => <span className="unread-dot" title="New activity" aria-label="New activity" />;
+
+function TicketTable({ tickets, showRequester, unreadIds }: { tickets: Ticket[]; showRequester: boolean; unreadIds: Set<string> }) {
   return (
     <div className="card table-wrap">
       <table className="table">
@@ -148,8 +169,11 @@ function TicketTable({ tickets, showRequester }: { tickets: Ticket[]; showReques
         </thead>
         <tbody>
           {tickets.map((t) => (
-            <tr key={t.id}>
-              <td><Link to={`/tickets/${t.ticketNumber}`}>{t.ticketNumber}</Link></td>
+            <tr key={t.id} className={unreadIds.has(t.id) ? 'row-unread' : ''}>
+              <td>
+                {unreadIds.has(t.id) && <UnreadDot />}
+                <Link to={`/tickets/${t.ticketNumber}`}>{t.ticketNumber}</Link>
+              </td>
               <td>{t.subject}</td>
               <td><StatusBadge status={t.status} /></td>
               <td><SeverityBadge severity={t.severity} /></td>
@@ -165,13 +189,16 @@ function TicketTable({ tickets, showRequester }: { tickets: Ticket[]; showReques
   );
 }
 
-function TicketCards({ tickets }: { tickets: Ticket[] }) {
+function TicketCards({ tickets, unreadIds }: { tickets: Ticket[]; unreadIds: Set<string> }) {
   return (
     <div className="cards">
       {tickets.map((t) => (
         <Link key={t.id} to={`/tickets/${t.ticketNumber}`} className="card ticket-card">
           <div className="row space-between">
-            <strong>{t.ticketNumber}</strong>
+            <strong>
+              {unreadIds.has(t.id) && <UnreadDot />}
+              {t.ticketNumber}
+            </strong>
             <StatusBadge status={t.status} />
           </div>
           <p>{t.subject}</p>

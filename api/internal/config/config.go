@@ -27,6 +27,10 @@ type Config struct {
 	AdminEmail      string
 	AdminPassword   string
 	AdminName       string
+	// Optional TLS files. When both are set the API serves HTTPS, which also
+	// enables HTTP/2 (browsers only use HTTP/2 over TLS).
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 // Load reads the configuration and validates required values.
@@ -56,6 +60,8 @@ func Load() (*Config, error) {
 		AdminEmail:      os.Getenv("ADMIN_EMAIL"),
 		AdminPassword:   os.Getenv("ADMIN_PASSWORD"),
 		AdminName:       getEnv("ADMIN_NAME", "Default Admin"),
+		TLSCertFile:     os.Getenv("TLS_CERT_FILE"),
+		TLSKeyFile:      os.Getenv("TLS_KEY_FILE"),
 		DatabaseURL: BuildDatabaseURL(
 			os.Getenv("DB_HOST"), getEnv("DB_PORT", "5432"),
 			os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),

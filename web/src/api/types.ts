@@ -95,15 +95,48 @@ export interface Enums {
   statuses: TicketStatus[];
 }
 
+export interface TrendPoint {
+  bucket: string;
+  created: number;
+  resolved: number;
+}
+
 export interface Summary {
+  from: string | null;
+  to: string | null;
   total: number;
   byStatus: Record<string, number>;
   bySeverity: Record<string, number>;
   byType: Record<string, number>;
+  resolved: number;
+  closed: number;
+  reopened: number;
+  avgResolutionHours: number | null;
+  bucket: 'hour' | 'day' | 'month';
+  trend: TrendPoint[];
   recent: Ticket[];
 }
 
+export interface ChatMessage {
+  id: string;
+  ticketId: string;
+  sender: UserRef;
+  senderRole: Role;
+  body: string;
+  createdAt: string;
+}
+
+export interface ChatThread {
+  messages: ChatMessage[];
+  canSend: boolean;
+  reason?: string;
+  requester: UserRef;
+  assignee: UserRef | null;
+}
+
 export interface TicketFilters {
+  createdFrom?: string;
+  createdTo?: string;
   status?: string;
   type?: string;
   severity?: string;
@@ -111,6 +144,26 @@ export interface TicketFilters {
   sort?: string;
   page?: number;
   pageSize?: number;
+}
+
+export interface AppNotification {
+  id: string;
+  kind: 'event' | 'message' | 'attachment' | 'chat';
+  type: 'created' | 'assigned' | 'status_changed' | 'linked' | 'message_added' | 'comment' | 'internal_note' | 'attachment' | 'chat';
+  ticketId: string;
+  ticketNumber: string;
+  subject: string;
+  actorName: string;
+  data: Record<string, unknown> | null;
+  preview: string;
+  createdAt: string;
+  unread: boolean;
+}
+
+export interface NotificationFeed {
+  unreadCount: number;
+  unreadTicketIds: string[];
+  items: AppNotification[];
 }
 
 export interface AuthResponse {

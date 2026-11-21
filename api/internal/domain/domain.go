@@ -148,6 +148,9 @@ type TicketFilter struct {
 	PageSize    int
 	RequesterID string
 	AssigneeID  string
+	// Optional created_at range: CreatedFrom <= created_at < CreatedTo.
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
 }
 
 type Page[T any] struct {
@@ -165,10 +168,80 @@ type TicketCount struct {
 	Count    int
 }
 
+// Notification is one activity item (by someone else) on a ticket the user
+// requested or is assigned to.
+type Notification struct {
+	ID           string         `json:"id"`
+	Kind         string         `json:"kind"` // event | message | attachment
+	Type         string         `json:"type"` // created, assigned, status_changed, linked, comment, internal_note, attachment
+	TicketID     string         `json:"ticketId"`
+	TicketNumber string         `json:"ticketNumber"`
+	Subject      string         `json:"subject"`
+	ActorName    string         `json:"actorName"`
+	Data         map[string]any `json:"data"`
+	Preview      string         `json:"preview"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	Unread       bool           `json:"unread"`
+}
+
+type NotificationFeed struct {
+	UnreadCount     int            `json:"unreadCount"`
+	UnreadTicketIDs []string       `json:"unreadTicketIds"`
+	Items           []Notification `json:"items"`
+}
+
+// ReportRange is an optional time window plus the timezone used for trend buckets.
+type ReportRange struct {
+	From     *time.Time
+	To       *time.Time
+	Location *time.Location
+}
+
+// ResolutionStats are counts of status changes that happened inside a range.
+type ResolutionStats struct {
+	Resolved           int      `json:"resolved"`
+	Closed             int      `json:"closed"`
+	Reopened           int      `json:"reopened"`
+	AvgResolutionHours *float64 `json:"avgResolutionHours"`
+}
+
+// TrendPoint is one bucket (hour/day/month) of created vs resolved tickets.
+type TrendPoint struct {
+	Bucket   time.Time `json:"bucket"`
+	Created  int       `json:"created"`
+	Resolved int       `json:"resolved"`
+}
+
+// Summary is the dashboard: tickets created in the range broken down by
+// status/severity/type, resolution stats, a trend and recent tickets.
 type Summary struct {
+	From       *time.Time     `json:"from"`
+	To         *time.Time     `json:"to"`
 	Total      int            `json:"total"`
 	ByStatus   map[string]int `json:"byStatus"`
 	BySeverity map[string]int `json:"bySeverity"`
 	ByType     map[string]int `json:"byType"`
-	Recent     []Ticket       `json:"recent"`
+	ResolutionStats
+	Bucket string       `json:"bucket"`
+	Trend  []TrendPoint `json:"trend"`
+	Recent []Ticket     `json:"recent"`
+}
+
+// ChatMessage is a private 1:1 message between reporter and assignee.
+type ChatMessage struct {
+	ID         string    `json:"id"`
+	TicketID   string    `json:"ticketId"`
+	Sender     UserRef   `json:"sender"`
+	SenderRole Role      `json:"senderRole"`
+	Body       string    `json:"body"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// ChatThread is the chat history plus what the viewer is allowed to do.
+type ChatThread struct {
+	Messages  []ChatMessage `json:"messages"`
+	CanSend   bool          `json:"canSend"`
+	Reason    string        `json:"reason,omitempty"`
+	Requester UserRef       `json:"requester"`
+	Assignee  *UserRef      `json:"assignee"`
 }

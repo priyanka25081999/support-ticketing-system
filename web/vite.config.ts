@@ -8,6 +8,9 @@ export default defineConfig({
   server: {
     port: 5180,
     strictPort: true,
+    // Listen on all interfaces so colleagues on the same network can connect
+    // via http://<your-LAN-IP>:5180.
+    host: true,
     proxy: { '/api': 'http://localhost:8080' },
   },
 });

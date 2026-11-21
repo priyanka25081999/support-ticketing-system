@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext';
 import { FileInput } from '../components/FileInput';
 import { LinkTicketPicker } from '../components/LinkTicketPicker';
 import { ErrorMessage } from '../components/common';
+import { Select } from '../components/Select';
 import { useEnums } from '../hooks/queries';
 import { getErrorMessage, humanize, validateEmailList } from '../utils';
 
@@ -43,15 +44,15 @@ export function NewTicketPage() {
     onSuccess: ({ ticket, failed }) => {
       queryClient.invalidateQueries({ queryKey: ['tickets'] });
       queryClient.invalidateQueries({ queryKey: ['summary'] });
-      navigate(`/tickets/${ticket.ticketNumber}`, { state: { created: true, uploadErrors: failed } });
+      navigate(`/tickets/${ticket.ticketNumber}`, { replace: true, state: { created: true, uploadErrors: failed } });
     },
   });
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const emailError = validateEmailList(form.notifyEmails);
-    setFormError(emailError);
-    if (!emailError) create.mutate();
+    const error = !form.type ? 'Please choose a ticket type' : validateEmailList(form.notifyEmails);
+    setFormError(error);
+    if (!error) create.mutate();
   };
 
   const set = (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -76,19 +77,26 @@ export function NewTicketPage() {
         <textarea required rows={6} maxLength={5000} value={form.description} onChange={set('description')} />
       </label>
       <div className="grid-2">
-        <label>
+        <div className="form-field">
           <span>Type <span className="required">*</span></span>
-          <select required value={form.type} onChange={set('type')}>
-            <option value="">Select type…</option>
-            {enums?.types.map((t) => <option key={t} value={t}>{humanize(t)}</option>)}
-          </select>
-        </label>
-        <label>
+          <Select
+            label="Type"
+            placeholder="Select type…"
+            invalid={formError === 'Please choose a ticket type'}
+            value={form.type}
+            options={(enums?.types ?? []).map((t) => ({ value: t, label: humanize(t) }))}
+            onChange={(v) => setForm({ ...form, type: v })}
+          />
+        </div>
+        <div className="form-field">
           <span>Severity <span className="muted">(optional)</span></span>
-          <select value={form.severity} onChange={set('severity')}>
-            {enums?.severities.map((s) => <option key={s} value={s}>{humanize(s)}</option>)}
-          </select>
-        </label>
+          <Select
+            label="Severity"
+            value={form.severity}
+            options={(enums?.severities ?? []).map((s) => ({ value: s, label: humanize(s) }))}
+            onChange={(v) => setForm({ ...form, severity: v })}
+          />
+        </div>
       </div>
       <label>
         <span>Notification emails <span className="required">*</span></span>

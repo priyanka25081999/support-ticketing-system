@@ -1,7 +1,8 @@
 // Small presentational components shared across pages.
 import { Component, ErrorInfo, ReactNode } from 'react';
 import type { TicketStatus } from '../api/types';
-import { useLiveRefresh, REFRESH_INTERVAL_MS } from '../hooks/useLiveRefresh';
+import { REFRESH_OPTIONS, useLiveRefresh } from '../hooks/useLiveRefresh';
+import { Select } from './Select';
 import { formatTime, getErrorMessage, humanize } from '../utils';
 
 export function StatusBadge({ status }: { status: TicketStatus }) {
@@ -32,19 +33,37 @@ interface RefreshControlProps {
   onRefresh: () => void;
 }
 
-/** Live auto-refresh toggle, last-updated time and a manual refresh button. */
+const RefreshIcon = ({ spinning }: { spinning: boolean }) => (
+  <svg className={spinning ? 'spin' : ''} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+    <polyline points="23 4 23 10 17 10" />
+    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+  </svg>
+);
+
+/** Live status, last update time, manual refresh and auto-refresh interval (Off, 5s … 1h). */
 export function RefreshControl({ isFetching, updatedAt, onRefresh }: RefreshControlProps) {
-  const { live, setLive } = useLiveRefresh();
+  const { intervalMs, setIntervalMs, live } = useLiveRefresh();
+  const current = REFRESH_OPTIONS.find((o) => o.ms === intervalMs);
+
   return (
     <div className="refresh-control">
-      <label title={`Auto-refresh every ${REFRESH_INTERVAL_MS / 1000}s`}>
-        <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
-        <span className={live ? 'live-dot on' : 'live-dot'} /> Live
-      </label>
+      <span className={`live-pill ${live ? 'on' : ''}`} title={live ? `Auto-refresh every ${current?.label}` : 'Auto-refresh is off'}>
+        <span className={live ? 'live-dot on' : 'live-dot'} /> {live ? 'Live' : 'Paused'}
+      </span>
       {updatedAt > 0 && <span className="muted">Updated {formatTime(updatedAt)}</span>}
-      <button className="btn btn-small" onClick={onRefresh} disabled={isFetching}>
-        {isFetching ? 'Refreshing…' : '⟳ Refresh'}
-      </button>
+      <div className="btn-group">
+        <button className="btn btn-small" onClick={onRefresh} disabled={isFetching} aria-label="Refresh now" title="Refresh now">
+          <RefreshIcon spinning={isFetching} /> {isFetching ? 'Refreshing…' : 'Refresh'}
+        </button>
+        <Select
+          className="select-compact"
+          label="Auto refresh"
+          alignRight
+          value={String(intervalMs)}
+          options={REFRESH_OPTIONS.map((o) => ({ value: String(o.ms), label: o.label }))}
+          onChange={(v) => setIntervalMs(Number(v))}
+        />
+      </div>
     </div>
   );
 }

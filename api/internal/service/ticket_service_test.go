@@ -246,14 +246,14 @@ func TestSummary_ScopedToCustomer(t *testing.T) {
 	f.create(t, f.alice, "Two")
 	f.create(t, f.bob, "Three")
 
-	sum, err := f.svc.Summary(ctx, f.alice)
+	sum, err := f.svc.Summary(ctx, f.alice, domain.ReportRange{Location: time.UTC})
 	if err != nil {
 		t.Fatalf("summary: %v", err)
 	}
 	if sum.Total != 2 || sum.ByStatus["open"] != 2 || sum.ByStatus["closed"] != 0 || len(sum.Recent) != 2 {
 		t.Fatalf("unexpected summary: %+v", sum)
 	}
-	adminSum, _ := f.svc.Summary(ctx, f.admin)
+	adminSum, _ := f.svc.Summary(ctx, f.admin, domain.ReportRange{Location: time.UTC})
 	if adminSum.Total != 3 {
 		t.Fatalf("admin should see 3 tickets, got %d", adminSum.Total)
 	}
@@ -321,5 +321,47 @@ func TestAttachments(t *testing.T) {
 	detail, _ := f.svc.Get(ctx, f.alice, tk.ID)
 	if len(detail.Attachments) != 1 || detail.Attachments[0].Data != nil {
 		t.Fatalf("detail should list metadata only: %+v", detail.Attachments)
+	}
+}
+
+func TestNotifications_ScopeUnreadAndMarkRead(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	base := time.Now()
+	tick := 0
+	f.repo.Now = func() time.Time { tick++; return base.Add(time.Duration(tick) * time.Second) }
+
+	tk := f.create(t, f.alice, "Need help")
+	f.create(t, f.bob, "Bob's ticket")
+
+	// Admin (default assignee) is notified about both new tickets, without the auto-assign duplicate.
+	adminFeed, _ := f.svc.Notifications(ctx, f.admin)
+	if adminFeed.UnreadCount != 2 || len(adminFeed.UnreadTicketIDs) != 2 || adminFeed.Items[0].Type != "created" {
+		t.Fatalf("admin feed: %+v", adminFeed)
+	}
+
+	// Alice sees the admin's reply but not internal notes or her own actions.
+	f.svc.AddMessage(ctx, f.admin, tk.ID, AddMessageInput{Body: "Looking into it"})
+	f.svc.AddMessage(ctx, f.admin, tk.ID, AddMessageInput{Body: "secret", IsInternal: true})
+	aliceFeed, _ := f.svc.Notifications(ctx, f.alice)
+	if aliceFeed.UnreadCount != 1 || aliceFeed.Items[0].Type != "comment" || aliceFeed.Items[0].Preview != "Looking into it" {
+		t.Fatalf("alice feed: %+v", aliceFeed)
+	}
+
+	// Opening the ticket clears it; Bob can't mark Alice's ticket.
+	if err := f.svc.MarkNotificationsRead(ctx, f.alice, tk.TicketNumber); err != nil {
+		t.Fatal(err)
+	}
+	aliceFeed, _ = f.svc.Notifications(ctx, f.alice)
+	if aliceFeed.UnreadCount != 0 || len(aliceFeed.Items) != 1 || aliceFeed.Items[0].Unread {
+		t.Fatalf("expected all read: %+v", aliceFeed)
+	}
+	assertCode(t, f.svc.MarkNotificationsRead(ctx, f.bob, tk.ID), "NOT_FOUND")
+
+	// Mark all as read.
+	f.svc.MarkNotificationsRead(ctx, f.admin, "")
+	adminFeed, _ = f.svc.Notifications(ctx, f.admin)
+	if adminFeed.UnreadCount != 0 {
+		t.Fatalf("admin should have no unread: %+v", adminFeed)
 	}
 }

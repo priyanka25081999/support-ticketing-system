@@ -89,6 +89,19 @@ type Repository interface {
 	// GetAttachment returns metadata and file data.
 	GetAttachment(ctx context.Context, ticketID, attachmentID string) (domain.Attachment, error)
 
+	// Reports (scope + created range come from the filter; events use the range on their own time)
+	ResolutionStats(ctx context.Context, f domain.TicketFilter) (domain.ResolutionStats, error)
+	TicketTrend(ctx context.Context, f domain.TicketFilter, bucket string, loc *time.Location) ([]domain.TrendPoint, error)
+
+	// Chat
+	CreateChatMessage(ctx context.Context, ticketID, senderID, body string) (domain.ChatMessage, error)
+	ListChatMessages(ctx context.Context, ticketID string, limit int) ([]domain.ChatMessage, error)
+
+	// Notifications
+	ListNotifications(ctx context.Context, userID string, includeInternal bool, limit int) (domain.NotificationFeed, error)
+	MarkAllNotificationsRead(ctx context.Context, userID string) error
+	MarkTicketRead(ctx context.Context, userID, ticketID string) error
+
 	// Links
 	CreateLink(ctx context.Context, ticketID, linkedID string) error
 	DeleteLink(ctx context.Context, ticketID, linkedID string) error

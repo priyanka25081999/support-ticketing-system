@@ -1,55 +1,90 @@
-import { FormEvent, useEffect, useState } from 'react';
-import { FileInput } from '../components/FileInput';
+import { FormEvent, ReactNode, RefObject, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ticketsApi } from '../api/endpoints';
-import type { TicketDetail } from '../api/types';
+import type { Role, TicketDetail } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage, RefreshControl, SeverityBadge, StatusBadge } from '../components/common';
+import { FileInput } from '../components/FileInput';
 import { LinkTicketPicker } from '../components/LinkTicketPicker';
-import { Timeline } from '../components/Timeline';
+import { CommentList, HistoryList } from '../components/Timeline';
+import { ChatWindow } from '../components/ChatWindow';
+import { Select } from '../components/Select';
+import { useMarkTicketRead } from '../hooks/notifications';
 import { useAgents, useTicket, useTimeline } from '../hooks/queries';
 import { formatBytes, formatDate, getErrorMessage, humanize, nextStatuses } from '../utils';
 
+type Tab = 'comments' | 'history';
+
+/**
+ * Ticket page layout:
+ *   header (number, subject, action bar)
+ *   main column: details, description (read-only), attachments, activity (Comments | History tabs)
+ *   sidebar: people, notification emails, dates, linked tickets
+ */
 export function TicketDetailPage() {
   const { id = '' } = useParams();
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  // Show the "created" banner once; clear router state so it won't reappear on reload.
-  const [createdState] = useState(() => location.state as { created?: boolean; uploadErrors?: string[] } | null);
-  const justCreated = Boolean(createdState?.created);
-  useEffect(() => {
-    if (location.state) navigate(location.pathname, { replace: true, state: null });
-  }, [location.state, location.pathname, navigate]);
   const queryClient = useQueryClient();
   const ticketQuery = useTicket(id);
   const timelineQuery = useTimeline(id);
   const ticket = ticketQuery.data;
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const [tab, setTab] = useState<Tab>('comments');
+
+  // Show the "created" banner once; clear router state so it won't reappear on reload.
+  type RouteState = { created?: boolean; uploadErrors?: string[]; openChat?: boolean } | null;
+  const [createdState] = useState(() => location.state as RouteState);
+  const [chatOpen, setChatOpen] = useState(false);
+  useEffect(() => {
+    if (!location.state) return;
+    if ((location.state as RouteState)?.openChat) setChatOpen(true); // opened from a chat notification
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
+
+  useMarkTicketRead(ticket?.id);
+
+  // Return to the page the user came from; fall back to the list on direct visits.
+  const goBack = () => (location.key !== 'default' ? navigate(-1) : navigate('/tickets'));
 
   /** Refreshes everything that may change after an action on this ticket. */
   const refreshAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['ticket', id] });
-    queryClient.invalidateQueries({ queryKey: ['timeline', id] });
-    queryClient.invalidateQueries({ queryKey: ['tickets'] });
-    queryClient.invalidateQueries({ queryKey: ['summary'] });
+    for (const key of [['ticket', id], ['timeline', id], ['tickets'], ['summary'], ['notifications']]) {
+      queryClient.invalidateQueries({ queryKey: key });
+    }
   };
 
+  const focusComposer = () => {
+    setTab('comments');
+    setTimeout(() => composerRef.current?.focus(), 0);
+  };
+
+  const backButton = (
+    <button className="btn-link" onClick={goBack}>
+      ← Back
+    </button>
+  );
+
   if (ticketQuery.isLoading) return <p className="muted">Loading ticket…</p>;
-  if (ticketQuery.error || !ticket) {
+  if (ticketQuery.error || !ticket || !user) {
     return (
       <>
         <ErrorMessage error={ticketQuery.error ?? new Error('Ticket not found')} onRetry={() => ticketQuery.refetch()} />
-        <Link to="/tickets">← Back to tickets</Link>
+        {backButton}
       </>
     );
   }
 
-  const isOwner = user?.id === ticket.requester.id;
+  const isOwner = user.id === ticket.requester.id;
+  const timeline = timelineQuery.data ?? [];
+  const commentCount = timeline.filter((i) => i.kind === 'message').length;
+  const historyCount = timeline.length - commentCount;
 
   return (
     <>
-      {justCreated && (
+      {createdState?.created && (
         <div className="alert alert-success">
           Ticket <strong>{ticket.ticketNumber}</strong> created and assigned to {ticket.assignee?.name}.
         </div>
@@ -57,8 +92,9 @@ export function TicketDetailPage() {
       {createdState?.uploadErrors?.length ? (
         <div className="alert alert-error">Some files were not uploaded: {createdState.uploadErrors.join('; ')}</div>
       ) : null}
+
       <div className="page-header">
-        <Link to="/tickets">← Back</Link>
+        {backButton}
         <RefreshControl
           isFetching={ticketQuery.isFetching || timelineQuery.isFetching}
           updatedAt={ticketQuery.dataUpdatedAt}
@@ -69,90 +105,157 @@ export function TicketDetailPage() {
         />
       </div>
 
-      <section className="card">
-        <div className="row space-between">
-          <h1>
-            {ticket.ticketNumber}: {ticket.subject}
-          </h1>
-          <StatusBadge status={ticket.status} />
-        </div>
-        <div className="ticket-meta">
-          <span>Severity: <SeverityBadge severity={ticket.severity} /></span>
-          <span>Type: {humanize(ticket.type)}</span>
-          <span>Requester: {ticket.requester.name}</span>
-          <span>Assignee: {ticket.assignee?.name ?? 'Unassigned'}</span>
-          <span>Created: {formatDate(ticket.createdAt)}</span>
-          {ticket.notifyEmails.length > 0 && <span>Notify: {ticket.notifyEmails.join('; ')}</span>}
-        </div>
-        <p className="body">{ticket.description}</p>
-        {user && <TicketActions ticket={ticket} role={user.role} onDone={refreshAll} />}
-      </section>
+      <div className="card issue">
+        <header className="issue-header">
+          <div className="muted issue-key">{ticket.ticketNumber}</div>
+          <h1>{ticket.subject}</h1>
+          <ActionBar ticket={ticket} role={user.role} onDone={refreshAll} onComment={focusComposer} onChat={() => setChatOpen(true)} />
+        </header>
 
-      <div className="detail-grid">
-        <div>
-          {timelineQuery.error && <ErrorMessage error={timelineQuery.error} onRetry={() => timelineQuery.refetch()} />}
-          {timelineQuery.data && <Timeline items={timelineQuery.data} />}
-          <MessageComposer ticket={ticket} isStaff={user?.role !== 'customer'} onDone={refreshAll} />
-        </div>
-        <div>
-          <AttachmentsPanel ticket={ticket} onDone={refreshAll} />
-          <LinkedPanel ticket={ticket} canEdit={isOwner} onDone={refreshAll} />
+        <div className="issue-grid">
+          <div className="issue-main">
+            <dl className="field-grid">
+              <Field label="Type">{humanize(ticket.type)}</Field>
+              <Field label="Status"><StatusBadge status={ticket.status} /></Field>
+              <Field label="Severity"><SeverityBadge severity={ticket.severity} /></Field>
+            </dl>
+
+            <Section title="Description">
+              <p className="body description">{ticket.description}</p>
+            </Section>
+
+            <Section title={`Attachments (${ticket.attachments.length})`}>
+              <Attachments ticket={ticket} onDone={refreshAll} />
+            </Section>
+
+            <Section title="Activity">
+              <div className="tabs" role="tablist">
+                <TabButton active={tab === 'comments'} onClick={() => setTab('comments')}>
+                  Comments ({commentCount})
+                </TabButton>
+                <TabButton active={tab === 'history'} onClick={() => setTab('history')}>
+                  History ({historyCount})
+                </TabButton>
+              </div>
+              {timelineQuery.error && <ErrorMessage error={timelineQuery.error} onRetry={() => timelineQuery.refetch()} />}
+              {tab === 'comments' ? (
+                <>
+                  <CommentList items={timeline} />
+                  <Composer ticket={ticket} isStaff={user.role !== 'customer'} onDone={refreshAll} inputRef={composerRef} />
+                </>
+              ) : (
+                <HistoryList items={timeline} requesterId={ticket.requester.id} />
+              )}
+            </Section>
+          </div>
+
+          <aside className="issue-side">
+            <dl className="side-fields">
+              <Field label="Assignee">{ticket.assignee?.name ?? 'Unassigned'}</Field>
+              <AssigneeSelect ticket={ticket} role={user.role} onDone={refreshAll} />
+              <Field label="Reporter">{ticket.requester.name}</Field>
+              <Field label="Notify">
+                {ticket.notifyEmails.length ? ticket.notifyEmails.map((e) => <div key={e}>{e}</div>) : '—'}
+              </Field>
+              <Field label="Created">{formatDate(ticket.createdAt)}</Field>
+              <Field label="Updated">{formatDate(ticket.updatedAt)}</Field>
+              {ticket.solvedAt && <Field label="Solved">{formatDate(ticket.solvedAt)}</Field>}
+            </dl>
+            <LinkedTickets ticket={ticket} canEdit={isOwner} onDone={refreshAll} />
+          </aside>
         </div>
       </div>
+      {chatOpen && <ChatWindow ticket={ticket} onClose={() => setChatOpen(false)} />}
     </>
   );
 }
 
-/** Status buttons (role-aware) and admin reassignment. */
-function TicketActions({ ticket, role, onDone }: { ticket: TicketDetail; role: 'customer' | 'agent' | 'admin'; onDone: () => void }) {
-  const navigate = useNavigate();
-  const isStaff = role !== 'customer';
-  const agents = useAgents(isStaff);
-  const statusMutation = useMutation({ mutationFn: (s: string) => ticketsApi.changeStatus(ticket.id, s), onSuccess: onDone });
-  const assignMutation = useMutation({
-    mutationFn: (a: string) => ticketsApi.assign(ticket.id, a),
-    onSuccess: (updated) => {
-      onDone();
-      // An agent who hands the ticket to someone else can no longer view it.
-      if (role === 'agent' && updated.assignee?.id !== ticket.assignee?.id) {
-        navigate('/tickets', { replace: true });
-      }
-    },
-  });
-  const options = nextStatuses(role, ticket.status);
+// ---------- Small layout helpers ----------
 
-  if (options.length === 0 && !isStaff) return null;
-
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="actions">
-      {options.map((s) => (
-        <button key={s} className="btn" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate(s)}>
-          {role === 'customer' ? 'Reopen ticket' : `Mark ${humanize(s)}`}
-        </button>
-      ))}
-      {isStaff && ticket.status !== 'closed' && (
-        <label className="inline">
-          Assign to
-          <select
-            value={ticket.assignee?.id ?? ''}
-            disabled={assignMutation.isPending || !agents.data}
-            onChange={(e) => assignMutation.mutate(e.target.value)}
-          >
-            {agents.data?.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.fullName} ({a.role})
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {statusMutation.error && <ErrorMessage error={statusMutation.error} />}
-      {assignMutation.error && <ErrorMessage error={assignMutation.error} />}
+    <div className="field">
+      <dt>{label}</dt>
+      <dd>{children}</dd>
     </div>
   );
 }
 
-function MessageComposer({ ticket, isStaff, onDone }: { ticket: TicketDetail; isStaff: boolean; onDone: () => void }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="issue-section">
+      <h3>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button role="tab" aria-selected={active} className={`tab ${active ? 'active' : ''}`} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+// ---------- Actions ----------
+
+/** Comment shortcut + status transitions allowed for the user's role. */
+function ActionBar({ ticket, role, onDone, onComment, onChat }: { ticket: TicketDetail; role: Role; onDone: () => void; onComment: () => void; onChat: () => void }) {
+  const statusMutation = useMutation({ mutationFn: (s: string) => ticketsApi.changeStatus(ticket.id, s), onSuccess: onDone });
+  const options = nextStatuses(role, ticket.status);
+
+  return (
+    <div className="action-bar">
+      <button className="btn btn-small btn-chat" onClick={onChat} title="Private live chat between reporter and assignee">
+        💬 Chat
+      </button>
+      {ticket.status !== 'closed' && (
+        <button className="btn btn-small" onClick={onComment}>📝 Comment</button>
+      )}
+      {options.map((s) => (
+        <button key={s} className="btn btn-small" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate(s)}>
+          {role === 'customer' ? 'Reopen ticket' : humanize(s)}
+        </button>
+      ))}
+      {statusMutation.error && <ErrorMessage error={statusMutation.error} />}
+    </div>
+  );
+}
+
+/** Staff can reassign; an agent who hands a ticket off loses access and returns to the list. */
+function AssigneeSelect({ ticket, role, onDone }: { ticket: TicketDetail; role: Role; onDone: () => void }) {
+  const navigate = useNavigate();
+  const isStaff = role !== 'customer';
+  const agents = useAgents(isStaff);
+  const assign = useMutation({
+    mutationFn: (assigneeId: string) => ticketsApi.assign(ticket.id, assigneeId),
+    onSuccess: (updated) => {
+      onDone();
+      if (role === 'agent' && updated.assignee?.id !== ticket.assignee?.id) navigate('/tickets', { replace: true });
+    },
+  });
+
+  if (!isStaff || ticket.status === 'closed') return null;
+  return (
+    <div className="field">
+      <dt />
+      <dd>
+        <Select
+          label="Change assignee"
+          placeholder="Choose assignee…"
+          value={ticket.assignee?.id ?? ''}
+          disabled={assign.isPending || !agents.data}
+          options={(agents.data ?? []).map((a) => ({ value: a.id, label: `${a.fullName} (${a.role})` }))}
+          onChange={(v) => assign.mutate(v)}
+        />
+        {assign.error && <ErrorMessage error={assign.error} />}
+      </dd>
+    </div>
+  );
+}
+
+function Composer({ ticket, isStaff, onDone, inputRef }: { ticket: TicketDetail; isStaff: boolean; onDone: () => void; inputRef: RefObject<HTMLTextAreaElement> }) {
   const [body, setBody] = useState('');
   const [isInternal, setIsInternal] = useState(false);
   const send = useMutation({
@@ -165,7 +268,7 @@ function MessageComposer({ ticket, isStaff, onDone }: { ticket: TicketDetail; is
   });
 
   if (ticket.status === 'closed') {
-    return <p className="card muted">This ticket is closed. Create a new ticket and link this one if the problem returns.</p>;
+    return <p className="muted composer-closed">This ticket is closed. Create a new ticket and link this one if the problem returns.</p>;
   }
 
   const submit = (e: FormEvent) => {
@@ -174,26 +277,70 @@ function MessageComposer({ ticket, isStaff, onDone }: { ticket: TicketDetail; is
   };
 
   return (
-    <form className="card composer" onSubmit={submit}>
+    <form className="composer" onSubmit={submit}>
       {send.error && <ErrorMessage error={send.error} />}
-      <textarea rows={3} maxLength={5000} placeholder="Write a reply…" value={body} onChange={(e) => setBody(e.target.value)} />
+      <textarea ref={inputRef} rows={3} maxLength={5000} placeholder="Add a comment…" aria-label="Add a comment" value={body} onChange={(e) => setBody(e.target.value)} />
       <div className="row space-between">
         {isStaff ? (
-          <label className="muted">
+          <label className="check">
             <input type="checkbox" checked={isInternal} onChange={(e) => setIsInternal(e.target.checked)} /> Internal note (hidden from customer)
           </label>
         ) : (
           <span />
         )}
         <button className="btn btn-primary" disabled={send.isPending || !body.trim()}>
-          {send.isPending ? 'Sending…' : 'Send'}
+          {send.isPending ? 'Sending…' : 'Comment'}
         </button>
       </div>
     </form>
   );
 }
 
-function LinkedPanel({ ticket, canEdit, onDone }: { ticket: TicketDetail; canEdit: boolean; onDone: () => void }) {
+/** File list (click to download) plus drop zone to upload more. */
+function Attachments({ ticket, onDone }: { ticket: TicketDetail; onDone: () => void }) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [error, setError] = useState('');
+  const upload = useMutation({
+    mutationFn: async () => {
+      for (const file of files) await ticketsApi.uploadAttachment(ticket.id, file);
+    },
+    onSuccess: () => setFiles([]),
+    onError: (err) => setError(getErrorMessage(err)),
+    onSettled: onDone,
+  });
+  const download = (a: TicketDetail['attachments'][number]) =>
+    ticketsApi.downloadAttachment(ticket.id, a).catch((err) => setError(getErrorMessage(err)));
+
+  return (
+    <>
+      {error && <div className="alert alert-error">{error}</div>}
+      {ticket.attachments.length > 0 && (
+        <ul className="attachment-list">
+          {ticket.attachments.map((a) => (
+            <li key={a.id}>
+              <button className="btn-link" onClick={() => download(a)}>📄 {a.fileName}</button>
+              <span className="muted">
+                {formatBytes(a.sizeBytes)} · {a.uploader.name} · {formatDate(a.createdAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {ticket.status !== 'closed' && (
+        <>
+          <FileInput files={files} onChange={(f) => { setError(''); setFiles(f); }} onError={setError} />
+          {files.length > 0 && (
+            <button className="btn btn-primary btn-small" disabled={upload.isPending} onClick={() => upload.mutate()}>
+              {upload.isPending ? 'Uploading…' : `Upload ${files.length} file(s)`}
+            </button>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function LinkedTickets({ ticket, canEdit, onDone }: { ticket: TicketDetail; canEdit: boolean; onDone: () => void }) {
   const [picking, setPicking] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const add = useMutation({
@@ -209,17 +356,17 @@ function LinkedPanel({ ticket, canEdit, onDone }: { ticket: TicketDetail; canEdi
   const remove = useMutation({ mutationFn: (linkedId: string) => ticketsApi.removeLink(ticket.id, linkedId), onSuccess: onDone });
 
   return (
-    <aside className="card">
+    <section className="issue-section">
       <h3>Linked tickets</h3>
       {ticket.linkedTickets.length === 0 && <p className="muted">None</p>}
       <ul className="plain">
         {ticket.linkedTickets.map((l) => (
-          <li key={l.id} className="row space-between">
+          <li key={l.id} className="row space-between linked-row">
             <span>
               <Link to={`/tickets/${l.ticketNumber}`}>{l.ticketNumber}</Link> {l.subject} <StatusBadge status={l.status} />
             </span>
             {canEdit && (
-              <button className="btn btn-small btn-link" disabled={remove.isPending} onClick={() => remove.mutate(l.id)}>
+              <button className="btn-link" disabled={remove.isPending} onClick={() => remove.mutate(l.id)}>
                 Remove
               </button>
             )}
@@ -228,63 +375,19 @@ function LinkedPanel({ ticket, canEdit, onDone }: { ticket: TicketDetail; canEdi
       </ul>
       {remove.error && <ErrorMessage error={remove.error} />}
       {add.error && <ErrorMessage error={add.error} />}
-      {canEdit && ticket.status !== 'closed' && (
-        open ? (
-          <>
-            <LinkTicketPicker selected={picking} onChange={setPicking} excludeIds={[ticket.id, ...ticket.linkedTickets.map((l) => l.id)]} />
-            <div className="row">
-              <button className="btn btn-primary btn-small" disabled={!picking.length || add.isPending} onClick={() => add.mutate(picking)}>
-                Link selected
-              </button>
-              <button className="btn btn-small" onClick={() => setOpen(false)}>Cancel</button>
-            </div>
-          </>
-        ) : (
-          <button className="btn btn-small" onClick={() => setOpen(true)}>+ Link previous ticket</button>
-        )
-      )}
-    </aside>
-  );
-}
-
-/** Lists files (download on click) and lets anyone with access upload more. */
-function AttachmentsPanel({ ticket, onDone }: { ticket: TicketDetail; onDone: () => void }) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [error, setError] = useState('');
-  const upload = useMutation({
-    mutationFn: async () => {
-      for (const file of files) await ticketsApi.uploadAttachment(ticket.id, file);
-    },
-    onSuccess: () => setFiles([]),
-    onError: (err) => setError(getErrorMessage(err)),
-    onSettled: onDone,
-  });
-  const download = (a: TicketDetail['attachments'][number]) =>
-    ticketsApi.downloadAttachment(ticket.id, a).catch((err) => setError(getErrorMessage(err)));
-
-  return (
-    <aside className="card">
-      <h3>Attachments</h3>
-      {error && <div className="alert alert-error">{error}</div>}
-      {ticket.attachments.length === 0 && <p className="muted">None</p>}
-      <ul className="plain">
-        {ticket.attachments.map((a) => (
-          <li key={a.id}>
-            <button className="btn-link" onClick={() => download(a)}>📄 {a.fileName}</button>{' '}
-            <span className="muted">{formatBytes(a.sizeBytes)} · {a.uploader.name}</span>
-          </li>
-        ))}
-      </ul>
-      {ticket.status !== 'closed' && (
+      {canEdit && ticket.status !== 'closed' && (open ? (
         <>
-          <FileInput files={files} onChange={(f) => { setError(''); setFiles(f); }} onError={setError} />
-          {files.length > 0 && (
-            <button className="btn btn-primary btn-small" disabled={upload.isPending} onClick={() => upload.mutate()}>
-              {upload.isPending ? 'Uploading…' : `Upload ${files.length} file(s)`}
+          <LinkTicketPicker selected={picking} onChange={setPicking} excludeIds={[ticket.id, ...ticket.linkedTickets.map((l) => l.id)]} />
+          <div className="row">
+            <button className="btn btn-primary btn-small" disabled={!picking.length || add.isPending} onClick={() => add.mutate(picking)}>
+              Link selected
             </button>
-          )}
+            <button className="btn btn-small" onClick={() => setOpen(false)}>Cancel</button>
+          </div>
         </>
-      )}
-    </aside>
+      ) : (
+        <button className="btn btn-small" onClick={() => setOpen(true)}>+ Link previous ticket</button>
+      ))}
+    </section>
   );
 }

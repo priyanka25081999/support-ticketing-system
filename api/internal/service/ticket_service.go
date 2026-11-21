@@ -16,7 +16,6 @@ import (
 const (
 	defaultPageSize = 20
 	maxPageSize     = 100
-	recentLimit     = 5
 )
 
 // TicketService holds all ticket business rules: access control,
@@ -24,10 +23,11 @@ const (
 type TicketService struct {
 	repo repo.Repository
 	now  func() time.Time
+	chat *chatHub // in-process pub/sub for live chat streams
 }
 
 func NewTicketService(r repo.Repository) *TicketService {
-	return &TicketService{repo: r, now: time.Now}
+	return &TicketService{repo: r, now: time.Now, chat: newChatHub()}
 }
 
 type CreateTicketInput struct {
@@ -319,32 +319,6 @@ func (s *TicketService) ListAgents(ctx context.Context) ([]domain.User, error) {
 	return s.repo.ListStaff(ctx)
 }
 
-// Summary builds dashboard stats scoped to what the actor can see.
-func (s *TicketService) Summary(ctx context.Context, actor domain.Actor) (domain.Summary, error) {
-	var scope domain.TicketFilter
-	applyScope(actor, &scope)
-
-	counts, err := s.repo.CountTickets(ctx, scope)
-	if err != nil {
-		return domain.Summary{}, err
-	}
-	sum := domain.Summary{
-		ByStatus:   zeroCounts(domain.Statuses),
-		BySeverity: zeroCounts(domain.Severities),
-		ByType:     zeroCounts(domain.Types),
-	}
-	for _, c := range counts {
-		sum.Total += c.Count
-		sum.ByStatus[c.Status] += c.Count
-		sum.BySeverity[c.Severity] += c.Count
-		sum.ByType[c.Type] += c.Count
-	}
-
-	scope.Sort, scope.Page, scope.PageSize = "updated", 1, recentLimit
-	sum.Recent, _, err = s.repo.ListTickets(ctx, scope)
-	return sum, err
-}
-
 // AutoClose closes solved tickets older than ReopenWindow.
 func (s *TicketService) AutoClose(ctx context.Context) (int64, error) {
 	return s.repo.AutoCloseSolved(ctx, s.now().Add(-ReopenWindow))
@@ -409,6 +383,9 @@ func validateFilter(f *domain.TicketFilter) error {
 		f.PageSize = defaultPageSize
 	}
 	f.PageSize = min(f.PageSize, maxPageSize)
+	if f.CreatedFrom != nil && f.CreatedTo != nil && !f.CreatedFrom.Before(*f.CreatedTo) {
+		return apperr.Validation("'from' must be before 'to'")
+	}
 	// Role scope is applied by the service, never taken from the client.
 	f.RequesterID, f.AssigneeID = "", ""
 	return nil

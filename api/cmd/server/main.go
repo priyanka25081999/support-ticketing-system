@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embedded zone data so report timezones work in any container
 
 	"ticketing/api/internal/auth"
 	"ticketing/api/internal/config"
@@ -77,8 +78,16 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("API listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+			// net/http negotiates HTTP/2 automatically over TLS (ALPN "h2").
+			slog.Info("API listening (HTTPS, HTTP/2 enabled)", "addr", srv.Addr)
+			err = srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+		} else {
+			slog.Info("API listening (HTTP/1.1; set TLS_CERT_FILE/TLS_KEY_FILE for HTTP/2)", "addr", srv.Addr)
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

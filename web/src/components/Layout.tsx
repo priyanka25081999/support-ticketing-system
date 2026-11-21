@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { humanize } from '../utils';
+import { NotificationBell } from './NotificationBell';
 
 /** App shell: top navigation (role-aware) + page content. */
 export function Layout() {
@@ -21,6 +22,7 @@ export function Layout() {
           {user.role === 'admin' && <NavLink to="/agents">Agents</NavLink>}
         </nav>
         <div className="user-box">
+          <NotificationBell />
           <span>
             {user.fullName} <span className="badge">{humanize(user.role)}</span>
           </span>

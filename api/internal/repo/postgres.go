@@ -223,6 +223,12 @@ func buildWhere(f domain.TicketFilter) (string, []any) {
 	if f.Search != "" {
 		add("(t.subject ILIKE ? OR t.ticket_number ILIKE ?)", "%"+escapeLike(f.Search)+"%")
 	}
+	if f.CreatedFrom != nil {
+		add("t.created_at >= ?", *f.CreatedFrom)
+	}
+	if f.CreatedTo != nil {
+		add("t.created_at < ?", *f.CreatedTo)
+	}
 	if len(conds) == 0 {
 		return "", args
 	}
@@ -284,8 +290,10 @@ func (p *Postgres) TouchTicket(ctx context.Context, id string) error {
 }
 
 func (p *Postgres) CountTickets(ctx context.Context, f domain.TicketFilter) ([]domain.TicketCount, error) {
-	// Only the role scope applies to the dashboard counts.
-	where, args := buildWhere(domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID})
+	// Dashboard counts use the role scope and the created range only.
+	where, args := buildWhere(domain.TicketFilter{
+		RequesterID: f.RequesterID, AssigneeID: f.AssigneeID, CreatedFrom: f.CreatedFrom, CreatedTo: f.CreatedTo,
+	})
 	rows, err := p.db.Query(ctx,
 		`SELECT t.status::text, t.severity::text, t.type::text, count(*)::int
 		 FROM tickets t`+where+` GROUP BY 1, 2, 3`, args...)
@@ -442,6 +450,234 @@ func (p *Postgres) GetAttachment(ctx context.Context, ticketID, attachmentID str
 		Scan(&a.ID, &a.TicketID, &a.Uploader.ID, &a.Uploader.Name,
 			&a.FileName, &a.ContentType, &a.SizeBytes, &a.CreatedAt, &a.Data)
 	return a, mapErr(err)
+}
+
+// ---------- Reports ----------
+
+// eventScope builds a WHERE clause for status events: role scope on the ticket,
+// time range on the event itself.
+func eventScope(f domain.TicketFilter) (string, []any) {
+	where, args := buildWhere(domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID})
+	conds := []string{"e.type = 'status_changed'"}
+	if where != "" {
+		conds = append(conds, strings.TrimPrefix(where, " WHERE "))
+	}
+	if f.CreatedFrom != nil {
+		args = append(args, *f.CreatedFrom)
+		conds = append(conds, fmt.Sprintf("e.created_at >= $%d", len(args)))
+	}
+	if f.CreatedTo != nil {
+		args = append(args, *f.CreatedTo)
+		conds = append(conds, fmt.Sprintf("e.created_at < $%d", len(args)))
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+func (p *Postgres) ResolutionStats(ctx context.Context, f domain.TicketFilter) (domain.ResolutionStats, error) {
+	var s domain.ResolutionStats
+	where, args := eventScope(f)
+	err := p.db.QueryRow(ctx, `
+		SELECT count(DISTINCT e.ticket_id) FILTER (WHERE e.data->>'to' = 'solved'),
+		       count(DISTINCT e.ticket_id) FILTER (WHERE e.data->>'to' = 'closed'),
+		       count(*) FILTER (WHERE e.data->>'from' = 'solved' AND e.data->>'to' = 'open')
+		FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id`+where, args...).
+		Scan(&s.Resolved, &s.Closed, &s.Reopened)
+	if err != nil {
+		return s, mapErr(err)
+	}
+
+	// Average time from creation to resolution for tickets solved inside the range.
+	where, args = buildWhere(domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID})
+	conds := []string{"t.solved_at IS NOT NULL"}
+	if where != "" {
+		conds = append(conds, strings.TrimPrefix(where, " WHERE "))
+	}
+	if f.CreatedFrom != nil {
+		args = append(args, *f.CreatedFrom)
+		conds = append(conds, fmt.Sprintf("t.solved_at >= $%d", len(args)))
+	}
+	if f.CreatedTo != nil {
+		args = append(args, *f.CreatedTo)
+		conds = append(conds, fmt.Sprintf("t.solved_at < $%d", len(args)))
+	}
+	err = p.db.QueryRow(ctx,
+		`SELECT avg(extract(epoch FROM t.solved_at - t.created_at)) / 3600 FROM tickets t WHERE `+strings.Join(conds, " AND "),
+		args...).Scan(&s.AvgResolutionHours)
+	return s, mapErr(err)
+}
+
+func (p *Postgres) TicketTrend(ctx context.Context, f domain.TicketFilter, bucket string, loc *time.Location) ([]domain.TrendPoint, error) {
+	createdWhere, createdArgs := buildWhere(domain.TicketFilter{
+		RequesterID: f.RequesterID, AssigneeID: f.AssigneeID, CreatedFrom: f.CreatedFrom, CreatedTo: f.CreatedTo,
+	})
+	eventWhere, eventArgs := eventScope(f)
+	// Renumber the event placeholders so both halves share one argument list.
+	offset := len(createdArgs)
+	eventWhere = regexp.MustCompile(`\$(\d+)`).ReplaceAllStringFunc(eventWhere, func(m string) string {
+		var n int
+		fmt.Sscanf(m, "$%d", &n)
+		return fmt.Sprintf("$%d", n+offset)
+	})
+	args := append(append(createdArgs, eventArgs...), bucket, loc.String())
+	b, tz := len(args)-1, len(args)
+
+	rows, err := p.db.Query(ctx, fmt.Sprintf(`
+		WITH c AS (
+		  SELECT date_trunc($%[1]d::text, t.created_at AT TIME ZONE $%[2]d::text) AS bucket, count(*)::int AS n
+		  FROM tickets t%[3]s GROUP BY 1
+		), r AS (
+		  SELECT date_trunc($%[1]d::text, e.created_at AT TIME ZONE $%[2]d::text) AS bucket, count(DISTINCT e.ticket_id)::int AS n
+		  FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id%[4]s AND e.data->>'to' = 'solved' GROUP BY 1
+		)
+		SELECT COALESCE(c.bucket, r.bucket), COALESCE(c.n, 0), COALESCE(r.n, 0)
+		FROM c FULL JOIN r ON c.bucket = r.bucket ORDER BY 1`, b, tz, createdWhere, eventWhere), args...)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	points := []domain.TrendPoint{}
+	for rows.Next() {
+		var wall time.Time // local wall-clock time in loc (timestamp without time zone)
+		var pt domain.TrendPoint
+		if err := rows.Scan(&wall, &pt.Created, &pt.Resolved); err != nil {
+			return nil, err
+		}
+		pt.Bucket = time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), 0, 0, 0, loc)
+		points = append(points, pt)
+	}
+	return points, rows.Err()
+}
+
+// ---------- Chat ----------
+
+func (p *Postgres) CreateChatMessage(ctx context.Context, ticketID, senderID, body string) (domain.ChatMessage, error) {
+	m := domain.ChatMessage{TicketID: ticketID, Sender: domain.UserRef{ID: senderID}, Body: body}
+	err := p.db.QueryRow(ctx,
+		`INSERT INTO ticket_chat_messages (ticket_id, sender_id, body) VALUES ($1::uuid, $2::uuid, $3)
+		 RETURNING id::text, created_at`, ticketID, senderID, body).Scan(&m.ID, &m.CreatedAt)
+	return m, mapErr(err)
+}
+
+func (p *Postgres) ListChatMessages(ctx context.Context, ticketID string, limit int) ([]domain.ChatMessage, error) {
+	// Latest N messages, returned oldest first.
+	rows, err := p.db.Query(ctx, `
+		SELECT * FROM (
+		  SELECT c.id::text, c.ticket_id::text, c.sender_id::text, u.full_name, u.role::text, c.body, c.created_at
+		  FROM ticket_chat_messages c JOIN users u ON u.id = c.sender_id
+		  WHERE c.ticket_id = $1::uuid ORDER BY c.created_at DESC LIMIT $2
+		) latest ORDER BY created_at`, ticketID, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	msgs := []domain.ChatMessage{}
+	for rows.Next() {
+		var m domain.ChatMessage
+		if err := rows.Scan(&m.ID, &m.TicketID, &m.Sender.ID, &m.Sender.Name, &m.SenderRole, &m.Body, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
+// ---------- Notifications ----------
+
+// notificationCTE builds "marked": activity by others on tickets the user
+// requested or is assigned to, each flagged unread if newer than both the
+// user's mark-all watermark and their per-ticket read time.
+// $1 = user id, $2 = include internal notes.
+const notificationCTE = `
+WITH scope AS (
+  SELECT id, ticket_number, subject, requester_id FROM tickets
+  WHERE requester_id = $1::uuid OR assignee_id = $1::uuid
+),
+items AS (
+  SELECT e.id::text AS id, 'event' AS kind, e.type::text AS type, e.ticket_id, e.actor_id,
+         e.data, ''::text AS preview, e.created_at
+  FROM ticket_events e JOIN scope s ON s.id = e.ticket_id
+  WHERE e.actor_id IS DISTINCT FROM $1::uuid
+    -- skip the automatic assignment logged when the requester creates the ticket
+    AND NOT (e.type = 'assigned' AND e.actor_id = s.requester_id)
+  UNION ALL
+  SELECT m.id::text, 'message', CASE WHEN m.is_internal THEN 'internal_note' ELSE 'comment' END,
+         m.ticket_id, m.author_id, '{}'::jsonb, left(m.body, 140), m.created_at
+  FROM ticket_messages m JOIN scope s ON s.id = m.ticket_id
+  WHERE m.author_id <> $1::uuid AND ($2::boolean OR NOT m.is_internal)
+  UNION ALL
+  SELECT a.id::text, 'attachment', 'attachment', a.ticket_id, a.uploader_id,
+         jsonb_build_object('fileName', a.file_name), '', a.created_at
+  FROM ticket_attachments a JOIN scope s ON s.id = a.ticket_id
+  WHERE a.uploader_id <> $1::uuid
+  UNION ALL
+  SELECT c.id::text, 'chat', 'chat', c.ticket_id, c.sender_id, '{}'::jsonb, left(c.body, 140), c.created_at
+  FROM ticket_chat_messages c JOIN scope s ON s.id = c.ticket_id
+  WHERE c.sender_id <> $1::uuid
+),
+marked AS (
+  SELECT i.*, i.created_at > GREATEST(u.notifications_read_at, COALESCE(tr.read_at, '-infinity'::timestamptz)) AS unread
+  FROM items i
+  CROSS JOIN (SELECT notifications_read_at FROM users WHERE id = $1::uuid) u
+  LEFT JOIN ticket_reads tr ON tr.user_id = $1::uuid AND tr.ticket_id = i.ticket_id
+)`
+
+func (p *Postgres) ListNotifications(ctx context.Context, userID string, includeInternal bool, limit int) (domain.NotificationFeed, error) {
+	feed := domain.NotificationFeed{UnreadTicketIDs: []string{}, Items: []domain.Notification{}}
+
+	rows, err := p.db.Query(ctx, notificationCTE+`
+		SELECT ticket_id::text, count(*)::int FROM marked WHERE unread GROUP BY ticket_id`,
+		userID, includeInternal)
+	if err != nil {
+		return feed, mapErr(err)
+	}
+	for rows.Next() {
+		var ticketID string
+		var n int
+		if err := rows.Scan(&ticketID, &n); err != nil {
+			rows.Close()
+			return feed, err
+		}
+		feed.UnreadTicketIDs = append(feed.UnreadTicketIDs, ticketID)
+		feed.UnreadCount += n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return feed, err
+	}
+
+	rows, err = p.db.Query(ctx, notificationCTE+`
+		SELECT m.id, m.kind, m.type, s.id::text, s.ticket_number, s.subject,
+		       COALESCE(u.full_name, 'System'), m.data, m.preview, m.created_at, m.unread
+		FROM marked m
+		JOIN scope s ON s.id = m.ticket_id
+		LEFT JOIN users u ON u.id = m.actor_id
+		ORDER BY m.created_at DESC, m.id
+		LIMIT $3`, userID, includeInternal, limit)
+	if err != nil {
+		return feed, mapErr(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n domain.Notification
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Type, &n.TicketID, &n.TicketNumber, &n.Subject,
+			&n.ActorName, &n.Data, &n.Preview, &n.CreatedAt, &n.Unread); err != nil {
+			return feed, err
+		}
+		feed.Items = append(feed.Items, n)
+	}
+	return feed, rows.Err()
+}
+
+func (p *Postgres) MarkAllNotificationsRead(ctx context.Context, userID string) error {
+	_, err := p.db.Exec(ctx, `UPDATE users SET notifications_read_at = now() WHERE id = $1::uuid`, userID)
+	return mapErr(err)
+}
+
+func (p *Postgres) MarkTicketRead(ctx context.Context, userID, ticketID string) error {
+	_, err := p.db.Exec(ctx,
+		`INSERT INTO ticket_reads (user_id, ticket_id) VALUES ($1::uuid, $2::uuid)
+		 ON CONFLICT (user_id, ticket_id) DO UPDATE SET read_at = now()`, userID, ticketID)
+	return mapErr(err)
 }
 
 // ---------- Links ----------

@@ -1,10 +1,23 @@
-import { Link } from 'react-router-dom';
-import { useSummary } from '../hooks/queries';
-import { ErrorMessage, RefreshControl, SeverityBadge, StatusBadge } from '../components/common';
-import { formatDate, humanize } from '../utils';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { metaApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
+import { ErrorMessage, RefreshControl, SeverityBadge, StatusBadge } from '../components/common';
+import { TimeRangePicker } from '../components/TimeRangePicker';
+import { TrendChart } from '../components/TrendChart';
+import { useSummary } from '../hooks/queries';
+import { formatDate, getErrorMessage, humanize } from '../utils';
+import { TimeRange, browserTimeZone, readRange, resolveRange, writeRange } from '../utils/timeRange';
 
-/** Horizontal bar list, e.g. tickets by severity. */
+const DEFAULT_RANGE = '30d';
+
+/** "5.2 h" or "2.1 d" */
+function formatDuration(hours: number | null): string {
+  if (hours == null) return '—';
+  return hours < 48 ? `${hours.toFixed(1)} h` : `${(hours / 24).toFixed(1)} d`;
+}
+
+/** Horizontal bar list, e.g. tickets by severity. Links to the filtered list. */
 function BreakdownCard({ title, counts, filterKey }: { title: string; counts: Record<string, number>; filterKey: string }) {
   const max = Math.max(1, ...Object.values(counts));
   return (
@@ -23,35 +36,84 @@ function BreakdownCard({ title, counts, filterKey }: { title: string; counts: Re
   );
 }
 
+function Kpi({ label, value, tone, hint }: { label: string; value: string | number; tone: string; hint?: string }) {
+  return (
+    <div className={`card kpi kpi-${tone}`} title={hint}>
+      <span className="muted">{label}</span>
+      <span className="kpi-value">{value}</span>
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const { user } = useAuth();
-  const { data, error, isLoading, isFetching, dataUpdatedAt, refetch } = useSummary();
+  const [params, setParams] = useSearchParams();
+  const range = readRange(params, DEFAULT_RANGE);
+  const { data, error, isLoading, isFetching, dataUpdatedAt, refetch } = useSummary(range);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const isStaff = user?.role === 'admin' || user?.role === 'agent';
   const scope = user?.role === 'admin' ? 'All tickets' : user?.role === 'agent' ? 'Tickets assigned to you' : 'Your tickets';
+
+  const setRange = (r: TimeRange) => setParams(writeRange(params, r, DEFAULT_RANGE), { replace: true });
+
+  const exportCsv = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      await metaApi.exportCsv({ ...resolveRange(range), tz: browserTimeZone() });
+    } catch (err) {
+      setExportError(getErrorMessage(err));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <>
       <div className="page-header">
         <div>
           <h1>Dashboard</h1>
-          <p className="muted">{scope}</p>
+          <p className="muted">{scope} · created in the selected range</p>
         </div>
-        <RefreshControl isFetching={isFetching} updatedAt={dataUpdatedAt} onRefresh={() => refetch()} />
+        <div className="toolbar">
+          <TimeRangePicker value={range} onChange={setRange} />
+          <RefreshControl isFetching={isFetching} updatedAt={dataUpdatedAt} onRefresh={() => refetch()} />
+          {isStaff && (
+            <button className="btn btn-small" onClick={exportCsv} disabled={exporting}>
+              ⬇ {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
+          )}
+        </div>
       </div>
 
+      {exportError && <div className="alert alert-error">{exportError}</div>}
       {error && <ErrorMessage error={error} onRetry={() => refetch()} />}
       {isLoading && <p className="muted">Loading dashboard…</p>}
 
       {data && (
         <>
+          <div className="kpis">
+            <Kpi label="Created" value={data.total} tone="created" hint="Tickets created in this range" />
+            <Kpi label="Resolved" value={data.resolved} tone="resolved" hint="Tickets moved to Solved in this range" />
+            <Kpi label="Closed" value={data.closed} tone="closed" hint="Tickets closed in this range" />
+            <Kpi label="Reopened" value={data.reopened} tone="reopened" hint="Solved tickets reopened in this range" />
+            <Kpi label="Avg. resolution" value={formatDuration(data.avgResolutionHours)} tone="time" hint="Average time from creation to Solved" />
+          </div>
+
+          <section className="card">
+            <div className="row space-between">
+              <h3>Created vs resolved</h3>
+              <span className="muted">per {data.bucket}</span>
+            </div>
+            <TrendChart points={data.trend} bucket={data.bucket} />
+          </section>
+
           <div className="stats">
-            <Link to="/tickets" className="stat card">
-              <span className="stat-value">{data.total}</span>
-              <span className="muted">Total</span>
-            </Link>
             {Object.entries(data.byStatus).map(([status, count]) => (
               <Link key={status} to={`/tickets?status=${status}`} className={`stat card stat-${status}`}>
                 <span className="stat-value">{count}</span>
-                <span className="muted">{humanize(status)}</span>
+                <span className="muted">{humanize(status)} now</span>
               </Link>
             ))}
           </div>
@@ -70,9 +132,7 @@ export function DashboardPage() {
                 <tbody>
                   {data.recent.map((t) => (
                     <tr key={t.id}>
-                      <td>
-                        <Link to={`/tickets/${t.ticketNumber}`}>{t.ticketNumber}</Link>
-                      </td>
+                      <td><Link to={`/tickets/${t.ticketNumber}`}>{t.ticketNumber}</Link></td>
                       <td>{t.subject}</td>
                       <td><StatusBadge status={t.status} /></td>
                       <td><SeverityBadge severity={t.severity} /></td>

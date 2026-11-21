@@ -29,15 +29,20 @@ type Repo struct {
 	events      []domain.Event
 	links       []link
 	attachments []domain.Attachment
+	chats       []domain.ChatMessage
+	readAll     map[string]time.Time // user -> mark-all watermark
+	ticketReads map[string]time.Time // user|ticket -> read time
 	Now         func() time.Time
 }
 
 func New() *Repo {
 	return &Repo{
-		users:   map[string]domain.User{},
-		tokens:  map[string]repo.RefreshToken{},
-		tickets: map[string]domain.Ticket{},
-		Now:     time.Now,
+		users:       map[string]domain.User{},
+		tokens:      map[string]repo.RefreshToken{},
+		tickets:     map[string]domain.Ticket{},
+		readAll:     map[string]time.Time{},
+		ticketReads: map[string]time.Time{},
+		Now:         time.Now,
 	}
 }
 
@@ -192,7 +197,12 @@ func (r *Repo) matches(t domain.Ticket, f domain.TicketFilter) bool {
 		(f.Status == "" || string(t.Status) == f.Status) &&
 		(f.Type == "" || t.Type == f.Type) &&
 		(f.Severity == "" || t.Severity == f.Severity) &&
-		(f.Search == "" || strings.Contains(strings.ToLower(t.Subject), strings.ToLower(f.Search)))
+		(f.Search == "" || strings.Contains(strings.ToLower(t.Subject), strings.ToLower(f.Search))) &&
+		inRange(t.CreatedAt, f)
+}
+
+func inRange(ts time.Time, f domain.TicketFilter) bool {
+	return (f.CreatedFrom == nil || !ts.Before(*f.CreatedFrom)) && (f.CreatedTo == nil || ts.Before(*f.CreatedTo))
 }
 
 func (r *Repo) ListTickets(_ context.Context, f domain.TicketFilter) ([]domain.Ticket, int, error) {
@@ -242,7 +252,7 @@ func (r *Repo) CountTickets(_ context.Context, f domain.TicketFilter) ([]domain.
 	defer r.mu.Unlock()
 	var out []domain.TicketCount
 	for _, t := range r.tickets {
-		if r.matches(t, domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID}) {
+		if r.matches(t, domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID, CreatedFrom: f.CreatedFrom, CreatedTo: f.CreatedTo}) {
 			out = append(out, domain.TicketCount{Status: string(t.Status), Severity: t.Severity, Type: t.Type, Count: 1})
 		}
 	}
@@ -392,4 +402,192 @@ func (r *Repo) GetAttachment(_ context.Context, ticketID, attachmentID string) (
 		}
 	}
 	return domain.Attachment{}, repo.ErrNotFound
+}
+
+func (r *Repo) ListNotifications(_ context.Context, userID string, includeInternal bool, limit int) (domain.NotificationFeed, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	feed := domain.NotificationFeed{UnreadTicketIDs: []string{}, Items: []domain.Notification{}}
+	var items []domain.Notification
+	add := func(t domain.Ticket, n domain.Notification) {
+		n.TicketID, n.TicketNumber, n.Subject = t.ID, t.TicketNumber, t.Subject
+		watermark := r.readAll[userID]
+		if tr := r.ticketReads[userID+"|"+t.ID]; tr.After(watermark) {
+			watermark = tr
+		}
+		n.Unread = n.CreatedAt.After(watermark)
+		items = append(items, n)
+	}
+	for _, t := range r.tickets {
+		if t.Requester.ID != userID && (t.Assignee == nil || t.Assignee.ID != userID) {
+			continue
+		}
+		for _, e := range r.events {
+			actorID, actorName := "", "System"
+			if e.Actor != nil {
+				actorID, actorName = e.Actor.ID, e.Actor.Name
+			}
+			if e.TicketID != t.ID || actorID == userID || (e.Type == domain.EventAssigned && actorID == t.Requester.ID) {
+				continue
+			}
+			add(t, domain.Notification{ID: fmt.Sprint(e.ID), Kind: "event", Type: e.Type, ActorName: actorName, Data: e.Data, CreatedAt: e.CreatedAt})
+		}
+		for _, msg := range r.messages {
+			if msg.TicketID != t.ID || msg.Author.ID == userID || (msg.IsInternal && !includeInternal) {
+				continue
+			}
+			typ := "comment"
+			if msg.IsInternal {
+				typ = "internal_note"
+			}
+			add(t, domain.Notification{ID: msg.ID, Kind: "message", Type: typ, ActorName: msg.Author.Name, Preview: msg.Body, CreatedAt: msg.CreatedAt})
+		}
+		for _, c := range r.chats {
+			if c.TicketID != t.ID || c.Sender.ID == userID {
+				continue
+			}
+			add(t, domain.Notification{ID: c.ID, Kind: "chat", Type: "chat", ActorName: c.Sender.Name, Preview: c.Body, CreatedAt: c.CreatedAt})
+		}
+		for _, a := range r.attachments {
+			if a.TicketID != t.ID || a.Uploader.ID == userID {
+				continue
+			}
+			add(t, domain.Notification{ID: a.ID, Kind: "attachment", Type: "attachment", ActorName: a.Uploader.Name,
+				Data: map[string]any{"fileName": a.FileName}, CreatedAt: a.CreatedAt})
+		}
+	}
+	seen := map[string]bool{}
+	for _, n := range items {
+		if n.Unread {
+			feed.UnreadCount++
+			if !seen[n.TicketID] {
+				seen[n.TicketID] = true
+				feed.UnreadTicketIDs = append(feed.UnreadTicketIDs, n.TicketID)
+			}
+		}
+	}
+	slices.SortStableFunc(items, func(a, b domain.Notification) int { return b.CreatedAt.Compare(a.CreatedAt) })
+	feed.Items = append(feed.Items, items[:min(limit, len(items))]...)
+	return feed, nil
+}
+
+func (r *Repo) MarkAllNotificationsRead(_ context.Context, userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.readAll[userID] = r.Now()
+	return nil
+}
+
+func (r *Repo) MarkTicketRead(_ context.Context, userID, ticketID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ticketReads[userID+"|"+ticketID] = r.Now()
+	return nil
+}
+
+// statusEvents returns status_changed events in scope whose time falls in the range.
+func (r *Repo) statusEvents(f domain.TicketFilter) []domain.Event {
+	var out []domain.Event
+	scope := domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID}
+	for _, e := range r.events {
+		if e.Type == domain.EventStatusChanged && r.matches(r.tickets[e.TicketID], scope) && inRange(e.CreatedAt, f) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (r *Repo) ResolutionStats(_ context.Context, f domain.TicketFilter) (domain.ResolutionStats, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var s domain.ResolutionStats
+	solved, closed := map[string]bool{}, map[string]bool{}
+	for _, e := range r.statusEvents(f) {
+		switch {
+		case e.Data["to"] == "solved":
+			solved[e.TicketID] = true
+		case e.Data["to"] == "closed":
+			closed[e.TicketID] = true
+		case e.Data["from"] == "solved" && e.Data["to"] == "open":
+			s.Reopened++
+		}
+	}
+	s.Resolved, s.Closed = len(solved), len(closed)
+	var total float64
+	var n int
+	for _, t := range r.tickets {
+		if t.SolvedAt != nil && r.matches(t, domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID}) && inRange(*t.SolvedAt, f) {
+			total += t.SolvedAt.Sub(t.CreatedAt).Hours()
+			n++
+		}
+	}
+	if n > 0 {
+		avg := total / float64(n)
+		s.AvgResolutionHours = &avg
+	}
+	return s, nil
+}
+
+func (r *Repo) TicketTrend(_ context.Context, f domain.TicketFilter, bucket string, loc *time.Location) ([]domain.TrendPoint, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	trunc := func(ts time.Time) time.Time {
+		ts = ts.In(loc)
+		switch bucket {
+		case "hour":
+			return time.Date(ts.Year(), ts.Month(), ts.Day(), ts.Hour(), 0, 0, 0, loc)
+		case "month":
+			return time.Date(ts.Year(), ts.Month(), 1, 0, 0, 0, 0, loc)
+		default:
+			return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, loc)
+		}
+	}
+	byBucket := map[time.Time]*domain.TrendPoint{}
+	get := func(b time.Time) *domain.TrendPoint {
+		if byBucket[b] == nil {
+			byBucket[b] = &domain.TrendPoint{Bucket: b}
+		}
+		return byBucket[b]
+	}
+	for _, t := range r.tickets {
+		if r.matches(t, domain.TicketFilter{RequesterID: f.RequesterID, AssigneeID: f.AssigneeID, CreatedFrom: f.CreatedFrom, CreatedTo: f.CreatedTo}) {
+			get(trunc(t.CreatedAt)).Created++
+		}
+	}
+	for _, e := range r.statusEvents(f) {
+		if e.Data["to"] == "solved" {
+			get(trunc(e.CreatedAt)).Resolved++
+		}
+	}
+	out := []domain.TrendPoint{}
+	for _, p := range byBucket {
+		out = append(out, *p)
+	}
+	slices.SortFunc(out, func(a, b domain.TrendPoint) int { return a.Bucket.Compare(b.Bucket) })
+	return out, nil
+}
+
+func (r *Repo) CreateChatMessage(_ context.Context, ticketID, senderID, body string) (domain.ChatMessage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u := r.users[senderID]
+	msg := domain.ChatMessage{ID: r.nextID(), TicketID: ticketID, Sender: domain.UserRef{ID: u.ID, Name: u.FullName},
+		SenderRole: u.Role, Body: body, CreatedAt: r.Now()}
+	r.chats = append(r.chats, msg)
+	return msg, nil
+}
+
+func (r *Repo) ListChatMessages(_ context.Context, ticketID string, limit int) ([]domain.ChatMessage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := []domain.ChatMessage{}
+	for _, c := range r.chats {
+		if c.TicketID == ticketID {
+			out = append(out, c)
+		}
+	}
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
 }

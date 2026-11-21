@@ -19,6 +19,8 @@ cd api && go run ./cmd/server
 cd web && npm install && npm run dev
 ```
 
+**Sharing on your LAN:** the Vite dev server listens on all interfaces, so others on the same Wi‑Fi can open `http://<your-LAN-IP>:5180` (find it with `ipconfig getifaddr en0` on macOS). API calls go through the Vite proxy, so only port 5180 needs to be reachable. If the macOS firewall prompts, allow incoming connections for `node`.
+
 Default admin: `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env` (`admin@example.com` / `Admin@12345`). Customers register from the UI; the admin creates agents on the **Agents** page.
 
 **Configuration:** every setting lives in the root `.env` (see `.env.example`). The DB connection is built from `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL` in `api/internal/config/config.go`.
@@ -50,9 +52,19 @@ web/src/                React SPA                                   <- frontend
   components/, pages/   UI (Dashboard, Tickets list, Ticket detail, New ticket, Agents)
 ```
 
-**Tables:** `users`, `tickets` (incl. `notify_emails TEXT[]`), `ticket_messages`, `ticket_events`, `ticket_links`, `ticket_attachments`, `refresh_tokens`, plus `schema_migrations` (managed by golang-migrate).
+**Tables:** `users`, `tickets` (incl. `notify_emails TEXT[]`), `ticket_messages`, `ticket_events`, `ticket_links`, `ticket_attachments`, `ticket_chat_messages` (private 1:1 chat), `ticket_reads` (per-ticket notification read time; `users.notifications_read_at` stores "mark all read"), `refresh_tokens`, plus `schema_migrations` (managed by golang-migrate).
 
 **New ticket form:** Subject, Description, Type and Notification emails (separated by `;`, pre-filled with your email) are required. Severity (defaults to medium), attachments and linked tickets are optional.
+
+**Live chat (1:1):** the 💬 **Chat** button on a ticket opens a popup chat between the reporter and the current assignee. Chat is separate from comments. Admins who aren't the assignee can read it but not send. New messages arrive instantly over a Server-Sent Events stream, which reconnects automatically and reloads the history after a reconnect. A chat message from the other person also appears in the notification bell.
+
+**HTTP/2:** set `TLS_CERT_FILE` and `TLS_KEY_FILE` in `.env` and the API serves HTTPS, which lets browsers use HTTP/2, so all chat streams and API calls share one connection. Without these the API runs plain HTTP/1.1, which is what the local setup uses.
+
+**Dashboard & reports:** a time range picker (quick ranges from Last 1 hour to All time, a custom from/to, and « » to step back and forward) and an auto-refresh selector (Off, 5s … 1h, plus Refresh now). The dashboard shows Created, Resolved, Closed, Reopened and average resolution time, a created-vs-resolved trend chart, and breakdowns by status, severity and type. Admins and agents can **Export CSV** for the selected range. The ticket list has the same range filter, applied to created date.
+
+**Notifications:** a bell in the top-right corner, available to every role, polls every 10 s. It lists activity by other people on tickets you raised or that are assigned to you: new tickets, assignments, status changes, comments, attachments and links. Internal notes are shown only to staff. Unread items are highlighted, the count appears on the bell and in the browser tab title, and tickets with unread activity get a dot in the ticket list. Opening a ticket marks its activity as read, and "Mark all as read" clears everything.
+
+**Ticket page:** the ticket number, subject and actions (Comment and status changes) sit at the top. The main column shows Type, Status and Severity, then the read-only Description, Attachments (drag and drop or browse), and Activity with separate **Comments** and **History** tabs. The sidebar shows Assignee (with reassignment for staff), Reporter, notification emails, Created and Updated dates, and Linked tickets. All times show the timezone (e.g. `21 Nov 2026, 12:41 IST`). **Back** returns to the page you came from.
 
 **UI features:** filters (status, type, severity, search) and sorting are kept in the URL, with a table/card view toggle and pagination. **Live refresh** is on by default (every 10 s, plus a refetch when the window regains focus) and can be switched off; a **Refresh** button refreshes on demand. The dashboard is scoped by role: admins see all tickets, agents see their assigned tickets, customers see their own. Errors show inline with a Retry button, and an error boundary catches render crashes.
 
@@ -315,6 +327,13 @@ CREATE TABLE refresh_tokens (
 | POST   | `/tickets/{id}/attachments`              | owner/agent                         | Upload one file (`multipart/form-data`, field `file`, max 5 MB, 10 per ticket) |
 | GET    | `/tickets/{id}/attachments/{attId}`      | owner/agent                         | Download a file (always served as an attachment)                             |
 | GET    | `/reports/summary`                       | auth                                | Dashboard counts by status/severity/type + recent tickets (role-scoped)      |
+| GET    | `/reports/summary?from=&to=&tz=`         | auth                                | Created/resolved/closed/reopened, average resolution time, trend and breakdowns for a date range (role-scoped) |
+| GET    | `/reports/export?from=&to=&tz=`          | admin / agent                       | CSV of tickets created in the range (agents: assigned tickets only)          |
+| GET    | `/tickets/{id}/chat`                     | reporter / assignee / admin (read)  | 1:1 chat history and whether you can send                                    |
+| POST   | `/tickets/{id}/chat`                     | reporter / assignee                 | `{ "body": "..." }` send a chat message                                      |
+| GET    | `/tickets/{id}/chat/stream`              | reporter / assignee / admin (read)  | Live chat via Server-Sent Events (HTTP/2 when served over TLS)               |
+| GET    | `/notifications`                         | auth                                | Recent activity by others on tickets you requested or are assigned to, with unread count |
+| POST   | `/notifications/read`                    | auth                                | `{ "ticketId": "..." }` marks one ticket read; `{}` marks everything read     |
 
 **Create ticket example**
 

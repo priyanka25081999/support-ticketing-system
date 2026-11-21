@@ -1,16 +1,16 @@
-import { useState } from 'react';
 import type { TimelineItem } from '../api/types';
 import { formatDate, humanize } from '../utils';
 
-/** One-line description of a ticket event. */
-function describeEvent(item: TimelineItem): string {
+/** One-line description of a ticket event. requesterId identifies the automatic assignment on creation. */
+export function describeEvent(item: TimelineItem, requesterId?: string): string {
   const e = item.event!;
   const who = e.actor?.name ?? 'System';
   switch (e.type) {
     case 'created':
       return `${who} created the ticket`;
     case 'assigned':
-      return `Assigned to ${e.data.assigneeName ?? 'someone'}`;
+      if (!e.actor || e.actor.id === requesterId) return `Auto-assigned to ${e.data.assigneeName ?? 'someone'}`;
+      return `${who} assigned the ticket to ${e.data.assigneeName ?? 'someone'}`;
     case 'status_changed':
       return `${who} changed status ${humanize(String(e.data.from))} → ${humanize(String(e.data.to))}${e.data.auto ? ' (auto)' : ''}`;
     case 'linked':
@@ -20,42 +20,43 @@ function describeEvent(item: TimelineItem): string {
   }
 }
 
-/** Messages and status events in time order; events can be hidden. */
-export function Timeline({ items }: { items: TimelineItem[] }) {
-  const [showEvents, setShowEvents] = useState(true);
-  const visible = showEvents ? items : items.filter((i) => i.kind === 'message');
-
+/** Conversation between the customer and support (oldest first). */
+export function CommentList({ items }: { items: TimelineItem[] }) {
+  const comments = items.filter((i) => i.kind === 'message' && i.message);
+  if (comments.length === 0) return <p className="muted">There are no comments yet on this ticket.</p>;
   return (
-    <section className="card">
-      <div className="row space-between">
-        <h3>Timeline</h3>
-        <label className="muted">
-          <input type="checkbox" checked={showEvents} onChange={(e) => setShowEvents(e.target.checked)} /> Show
-          activity
-        </label>
-      </div>
-      {visible.length === 0 && <p className="muted">No activity yet.</p>}
-      <ul className="timeline">
-        {visible.map((item) =>
-          item.kind === 'message' && item.message ? (
-            <li
-              key={`m-${item.message.id}`}
-              className={`message ${item.message.authorRole === 'customer' ? 'from-customer' : 'from-staff'} ${item.message.isInternal ? 'internal' : ''}`}
-            >
-              <div className="meta">
-                <strong>{item.message.author.name}</strong>
-                {item.message.isInternal && <span className="badge">Internal note</span>}
-                <span className="muted">{formatDate(item.createdAt)}</span>
-              </div>
-              <p className="body">{item.message.body}</p>
-            </li>
-          ) : (
-            <li key={`e-${item.event?.id}`} className="event muted">
-              • {describeEvent(item)} <span>· {formatDate(item.createdAt)}</span>
-            </li>
-          ),
-        )}
-      </ul>
-    </section>
+    <ul className="timeline">
+      {comments.map(({ message: m }) => (
+        <li
+          key={m!.id}
+          className={`message ${m!.authorRole === 'customer' ? 'from-customer' : 'from-staff'} ${m!.isInternal ? 'internal' : ''}`}
+        >
+          <div className="meta">
+            <span className="avatar" aria-hidden="true">{m!.author.name.charAt(0).toUpperCase()}</span>
+            <strong>{m!.author.name}</strong>
+            {m!.authorRole !== 'customer' && <span className="badge">{humanize(m!.authorRole)}</span>}
+            {m!.isInternal && <span className="badge status-pending">Internal note</span>}
+            <span className="muted">{formatDate(m!.createdAt)}</span>
+          </div>
+          <p className="body">{m!.body}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Status/assignment/link history (newest first). */
+export function HistoryList({ items, requesterId }: { items: TimelineItem[]; requesterId: string }) {
+  const events = items.filter((i) => i.kind === 'event' && i.event).reverse();
+  if (events.length === 0) return <p className="muted">No history yet.</p>;
+  return (
+    <ol className="history">
+      {events.map((item) => (
+        <li key={item.event!.id}>
+          <span>{describeEvent(item, requesterId)}</span>
+          <span className="muted">{formatDate(item.createdAt)}</span>
+        </li>
+      ))}
+    </ol>
   );
 }

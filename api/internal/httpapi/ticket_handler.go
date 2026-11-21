@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -32,16 +35,23 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	rng, err := service.ParseReportRange(q.Get("createdFrom"), q.Get("createdTo"), "")
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("pageSize"))
 	filter := domain.TicketFilter{
-		Status:   q.Get("status"),
-		Type:     q.Get("type"),
-		Severity: q.Get("severity"),
-		Search:   q.Get("search"),
-		Sort:     q.Get("sort"),
-		Page:     page,
-		PageSize: pageSize,
+		Status:      q.Get("status"),
+		Type:        q.Get("type"),
+		Severity:    q.Get("severity"),
+		Search:      q.Get("search"),
+		Sort:        q.Get("sort"),
+		Page:        page,
+		PageSize:    pageSize,
+		CreatedFrom: rng.From,
+		CreatedTo:   rng.To,
 	}
 	result, err := h.svc.List(r.Context(), mustActor(r), filter)
 	respond(w, http.StatusOK, result, err)
@@ -117,9 +127,36 @@ func (h *TicketHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, agents, err)
 }
 
+// Summary accepts optional ?from=&to= (RFC 3339) and ?tz= (IANA zone for trend buckets).
 func (h *TicketHandler) Summary(w http.ResponseWriter, r *http.Request) {
-	sum, err := h.svc.Summary(r.Context(), mustActor(r))
+	q := r.URL.Query()
+	rng, err := service.ParseReportRange(q.Get("from"), q.Get("to"), q.Get("tz"))
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	sum, err := h.svc.Summary(r.Context(), mustActor(r), rng)
 	respond(w, http.StatusOK, sum, err)
+}
+
+// Export streams tickets created in the range as CSV (agents: assigned tickets; admins: all).
+func (h *TicketHandler) Export(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rng, err := service.ParseReportRange(q.Get("from"), q.Get("to"), q.Get("tz"))
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	tickets, err := h.svc.ExportTickets(r.Context(), mustActor(r), rng)
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tickets-%s.csv"`, time.Now().In(rng.Location).Format("20060102-1504")))
+	if err := writeTicketsCSV(w, tickets, rng.Location); err != nil {
+		slog.Error("csv export failed", "err", err)
+	}
 }
 
 // Enums feeds the UI dropdowns so values always match the database enums.
@@ -172,4 +209,88 @@ func (h *TicketHandler) DownloadAttachment(w http.ResponseWriter, r *http.Reques
 		att.FileName, url.PathEscape(att.FileName)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(att.Data)
+}
+
+func (h *TicketHandler) Notifications(w http.ResponseWriter, r *http.Request) {
+	feed, err := h.svc.Notifications(r.Context(), mustActor(r))
+	respond(w, http.StatusOK, feed, err)
+}
+
+// MarkNotificationsRead accepts {"ticketId": "..."} or {} to mark everything read.
+func (h *TicketHandler) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TicketID string `json:"ticketId"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	if err := h.svc.MarkNotificationsRead(r.Context(), mustActor(r), in.TicketID); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------- Chat ----------
+
+func (h *TicketHandler) ChatThread(w http.ResponseWriter, r *http.Request) {
+	thread, err := h.svc.ChatThread(r.Context(), mustActor(r), chi.URLParam(r, "id"))
+	respond(w, http.StatusOK, thread, err)
+}
+
+func (h *TicketHandler) SendChat(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Body string `json:"body"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	msg, err := h.svc.SendChat(r.Context(), mustActor(r), chi.URLParam(r, "id"), in.Body)
+	respond(w, http.StatusCreated, msg, err)
+}
+
+const chatPingInterval = 25 * time.Second
+
+// ChatStream is a Server-Sent Events stream of new chat messages. Over HTTPS
+// it runs on HTTP/2, so many streams share one connection.
+func (h *TicketHandler) ChatStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		httpx.WriteError(w, fmt.Errorf("streaming not supported"))
+		return
+	}
+	msgs, unsubscribe, err := h.svc.SubscribeChat(r.Context(), mustActor(r), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	defer unsubscribe()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering (nginx)
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "event: ready\ndata: {}\n\n")
+	flusher.Flush()
+
+	ping := time.NewTicker(chatPingInterval)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, open := <-msgs:
+			if !open {
+				return // dropped as a slow consumer; the client reconnects
+			}
+			data, _ := json.Marshal(msg)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+			flusher.Flush()
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n") // keeps proxies from closing an idle stream
+			flusher.Flush()
+		}
+	}
 }

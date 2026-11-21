@@ -35,8 +35,30 @@ export function validateEmailList(raw: string): string {
   return '';
 }
 
-export const formatDate = (iso: string) => new Date(iso).toLocaleString();
-export const formatTime = (ms: number) => new Date(ms).toLocaleTimeString();
+// en-IN gives short zone names such as "IST" and "UTC"; timeZone is only passed in tests.
+const DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short',
+};
+const TIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZoneName: 'short',
+};
+
+/** e.g. "21 Nov 2026, 12:41 IST" */
+export const formatDate = (iso: string, timeZone?: string) =>
+  new Date(iso).toLocaleString('en-IN', { ...DATE_OPTIONS, timeZone });
+
+/** e.g. "13:52:08 IST" */
+export const formatTime = (ms: number, timeZone?: string) =>
+  new Date(ms).toLocaleTimeString('en-IN', { ...TIME_OPTIONS, timeZone });
+
+/** Short relative time, e.g. "5m ago". */
+export function timeAgo(iso: string, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
 
 /** "feature_request" -> "Feature request" */
 export const humanize = (value: string) => {

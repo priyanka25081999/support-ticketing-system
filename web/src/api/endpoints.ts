@@ -1,7 +1,19 @@
 import { api } from './client';
 import type {
-  Attachment, AuthResponse, Enums, Message, Page, Summary, Ticket, TicketDetail, TicketFilters, TimelineItem, User,
+  Attachment, AuthResponse, ChatMessage, ChatThread, NotificationFeed, Enums, Message, Page, Summary, Ticket, TicketDetail, TicketFilters, TimelineItem, User,
 } from './types';
+
+/** Saves a downloaded file via a temporary object URL. */
+export function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link); // Firefox/Safari need the link in the DOM
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking immediately can cancel the download
+}
 
 // ---------- Auth ----------
 export const authApi = {
@@ -51,22 +63,40 @@ export const ticketsApi = {
   /** Downloads with the auth header, then triggers a browser save. */
   downloadAttachment: async (id: string, attachment: Attachment) => {
     const res = await api.get<Blob>(`/tickets/${id}/attachments/${attachment.id}`, { responseType: 'blob' });
-    const url = URL.createObjectURL(res.data);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = attachment.fileName;
-    document.body.appendChild(link); // Firefox/Safari need the link in the DOM
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking immediately can cancel the download
+    saveBlob(res.data, attachment.fileName);
   },
 };
 
 // ---------- Meta, reports, agents ----------
+interface RangeParams {
+  from?: string;
+  to?: string;
+  tz: string;
+}
+
 export const metaApi = {
   enums: () => api.get<Enums>('/meta/enums').then((r) => r.data),
-  summary: () => api.get<Summary>('/reports/summary').then((r) => r.data),
+  summary: (params: RangeParams) => api.get<Summary>('/reports/summary', { params }).then((r) => r.data),
+  /** Downloads tickets created in the range as CSV (agents and admins). */
+  exportCsv: async (params: RangeParams) => {
+    const res = await api.get<Blob>('/reports/export', { params, responseType: 'blob' });
+    const match = /filename="([^"]+)"/.exec(String(res.headers['content-disposition'] ?? ''));
+    saveBlob(res.data, match?.[1] ?? 'tickets.csv');
+  },
   agents: () => api.get<User[]>('/agents').then((r) => r.data),
   createAgent: (fullName: string, email: string, password: string) =>
     api.post<User>('/agents', { fullName, email, password }).then((r) => r.data),
+};
+
+// ---------- Notifications ----------
+export const notificationsApi = {
+  list: () => api.get<NotificationFeed>('/notifications').then((r) => r.data),
+  /** Marks one ticket's activity as read, or everything when ticketId is omitted. */
+  markRead: (ticketId?: string) => api.post('/notifications/read', ticketId ? { ticketId } : {}),
+};
+
+// ---------- Chat (1:1 reporter <-> assignee) ----------
+export const chatApi = {
+  thread: (ticketId: string) => api.get<ChatThread>(`/tickets/${ticketId}/chat`).then((r) => r.data),
+  send: (ticketId: string, body: string) => api.post<ChatMessage>(`/tickets/${ticketId}/chat`, { body }).then((r) => r.data),
 };
