@@ -415,3 +415,25 @@ func TestRemoveAgent_ReassignsToAdminAndBlocksLogin(t *testing.T) {
 	_, err = f.svc.Assign(ctx, f.admin, tk.ID, f.agent.ID)
 	assertCode(t, err, "VALIDATION_ERROR")
 }
+
+func TestList_AssigneeFilterIsAdminOnly(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	mine := f.create(t, f.alice, "For the agent")
+	f.create(t, f.alice, "Stays with admin")
+	f.svc.Assign(ctx, f.admin, mine.ID, f.agent.ID)
+
+	page, _ := f.svc.List(ctx, f.admin, domain.TicketFilter{AssigneeIDs: []string{f.agent.ID}})
+	if page.Total != 1 || page.Items[0].ID != mine.ID {
+		t.Fatalf("admin assignee filter: %+v", page.Items)
+	}
+	page, _ = f.svc.List(ctx, f.admin, domain.TicketFilter{AssigneeIDs: []string{f.agent.ID, f.admin.ID}})
+	if page.Total != 2 {
+		t.Fatalf("multi assignee: %d", page.Total)
+	}
+	// A customer can't use it to widen or probe their scope.
+	page, _ = f.svc.List(ctx, f.alice, domain.TicketFilter{AssigneeIDs: []string{f.agent.ID}})
+	if page.Total != 2 {
+		t.Fatalf("customer should still see only (all) own tickets: %d", page.Total)
+	}
+}

@@ -68,6 +68,10 @@ web/src/                React SPA                                   <- frontend
 
 **Agents (admin):** the Agents page lists every active agent and admin with their count of open tickets, with search by name or email and a role filter. **Remove** deactivates an agent (soft delete, so names stay in ticket history). Their sessions are revoked, they can no longer sign in, and their unclosed tickets go back to the admin. Admins can't be removed.
 
+**Home (welcome page):** shown right after login. It has a time-of-day greeting ("Good afternoon, Cathy!"), a friendly welcome to Support Desk, role-based quick actions (customers: Create a ticket, My tickets, Dashboard; staff: Ticket queue, Dashboard, plus Manage agents for admins), your active tickets and a short feature tour.
+
+**Admin assignee filter:** the Ticket Queue has an extra multi-select **Assignee** filter for admins (`assignee=id1,id2`). The API ignores it for other roles.
+
 **UI features:** filters (status, type, severity, search) and sorting are kept in the URL, with a table/card view toggle and pagination. **Live refresh** is on by default (every 10 s, plus a refetch when the window regains focus) and can be switched off; a **Refresh** button refreshes on demand. The dashboard is scoped by role: admins see all tickets, agents see their assigned tickets, customers see their own. Errors show inline with a Retry button, and an error boundary catches render crashes.
 
 ---
@@ -323,7 +327,7 @@ CREATE TABLE refresh_tokens (
 | GET    | `/me`                                    | auth                                | Current user                                                                 |
 | GET    | `/meta/enums`                            | auth                                | Ticket types, severities, statuses                                           |
 | POST   | `/tickets`                               | customer                            | Create a ticket (auto-assigned to the default admin)                         |
-| GET    | `/tickets?status=&type=&severity=&search=&createdFrom=&createdTo=&page=` | auth | Multi-select filters as comma lists (e.g. `status=open,pending`); search matches ticket number, subject or type. Customers see their own tickets, agents see assigned tickets, admins see all |
+| GET    | `/tickets?status=&type=&severity=&assignee=&search=&createdFrom=&createdTo=&page=` | auth | Multi-select filters as comma lists (e.g. `status=open,pending`); search matches ticket number, subject or type. Customers see their own tickets, agents see assigned tickets, admins see all |
 | GET    | `/tickets/{id}`                          | owner/agent                         | Ticket details plus linked tickets                                           |
 | GET    | `/tickets/{id}/timeline`                 | owner/agent                         | Messages and events in order (internal notes are hidden from customers)      |
 | POST   | `/tickets/{id}/messages`                 | owner/agent                         | Add a comment                                                                |

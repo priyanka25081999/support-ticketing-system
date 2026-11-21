@@ -7,7 +7,7 @@ import { getErrorMessage } from '../utils';
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const from = (useLocation().state as { from?: string } | null)?.from ?? '/dashboard';
+  const from = (useLocation().state as { from?: string } | null)?.from ?? '/home';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -63,7 +63,7 @@ export function RegisterPage() {
     try {
       await authApi.register(form.fullName, form.email, form.password);
       await login(form.email, form.password);
-      navigate('/dashboard', { replace: true });
+      navigate('/home', { replace: true });
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {

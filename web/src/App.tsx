@@ -8,6 +8,7 @@ import { LiveRefreshProvider } from './hooks/useLiveRefresh';
 import { AgentsPage, NotFoundPage } from './pages/AgentsPage';
 import { LoginPage, RegisterPage } from './pages/AuthPages';
 import { DashboardPage } from './pages/DashboardPage';
+import { HomePage } from './pages/HomePage';
 import { NewTicketPage } from './pages/NewTicketPage';
 import { TicketDetailPage } from './pages/TicketDetailPage';
 import { TicketListPage } from './pages/TicketListPage';
@@ -30,7 +31,7 @@ const queryClient = new QueryClient({
 function PublicOnly({ children }: { children: JSX.Element }) {
   const { user, status } = useAuth();
   if (status === 'loading') return <div className="center muted">Loading…</div>;
-  return user ? <Navigate to="/dashboard" replace /> : children;
+  return user ? <Navigate to="/home" replace /> : children;
 }
 
 export default function App() {
@@ -46,7 +47,8 @@ export default function App() {
 
                 <Route element={<ProtectedRoute />}>
                   <Route element={<Layout />}>
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/" element={<Navigate to="/home" replace />} />
+                    <Route path="/home" element={<HomePage />} />
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/tickets" element={<TicketListPage />} />
                     <Route path="/tickets/:id" element={<TicketDetailPage />} />

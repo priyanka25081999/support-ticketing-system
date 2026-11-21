@@ -60,10 +60,12 @@ export function NewTicketPage() {
 
   return (
     <form className="card form" onSubmit={submit}>
-      <h1>New ticket</h1>
-      <p className="muted">
-        Fields marked <span className="required">*</span> are mandatory.
-      </p>
+      <header className="form-header">
+        <h1>New ticket</h1>
+        <p className="muted">
+          Fields marked <span className="required">*</span> are mandatory.
+        </p>
+      </header>
       {enumsError && <ErrorMessage error={enumsError} />}
       {create.error && <ErrorMessage error={create.error} />}
       {formError && <div className="alert alert-error">{formError}</div>}

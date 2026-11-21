@@ -233,6 +233,7 @@ func (r *Repo) matches(t domain.Ticket, f domain.TicketFilter) bool {
 		(len(f.Status) == 0 || slices.Contains(f.Status, string(t.Status))) &&
 		(len(f.Type) == 0 || slices.Contains(f.Type, t.Type)) &&
 		(len(f.Severity) == 0 || slices.Contains(f.Severity, t.Severity)) &&
+		(len(f.AssigneeIDs) == 0 || (t.Assignee != nil && slices.Contains(f.AssigneeIDs, t.Assignee.ID))) &&
 		(f.Search == "" || matchesSearch(t, f.Search)) &&
 		inRange(t.CreatedAt, f)
 }

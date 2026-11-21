@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import type { Ticket, TicketFilters } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage, Pagination, RefreshControl, SeverityBadge, StatusBadge } from '../components/common';
-import { useEnums, useTickets } from '../hooks/queries';
+import { useAgents, useEnums, useTickets } from '../hooks/queries';
 import { useNotifications } from '../hooks/notifications';
 import { Select } from '../components/Select';
 import { MultiSelect } from '../components/MultiSelect';
@@ -18,6 +18,8 @@ const VIEW_KEY = 'ticketViewMode';
 export function TicketListPage() {
   const { user } = useAuth();
   const isStaff = user?.role !== 'customer';
+  const isAdmin = user?.role === 'admin';
+  const { data: staff } = useAgents(isAdmin);
   const { data: enums } = useEnums();
   const [params, setParams] = useSearchParams();
   const [view, setView] = useState<ViewMode>(() => (localStorage.getItem(VIEW_KEY) as ViewMode) || 'table');
@@ -25,6 +27,7 @@ export function TicketListPage() {
 
   const filters: TicketFilters = {
     status: params.get('status') ?? '',
+    assignee: params.get('assignee') ?? '',
     type: params.get('type') ?? '',
     severity: params.get('severity') ?? '',
     search: params.get('search') ?? '',
@@ -62,7 +65,7 @@ export function TicketListPage() {
     setParams(next, { replace: true });
   };
 
-  const hasFilters = ['status', 'type', 'severity', 'search', 'range', 'from'].some((k) => params.get(k));
+  const hasFilters = ['status', 'type', 'severity', 'assignee', 'search', 'range', 'from'].some((k) => params.get(k));
 
   return (
     <>
@@ -90,6 +93,17 @@ export function TicketListPage() {
         <Field label="Severity">
           <EnumMultiSelect label="Severity" allLabel="All severities" param="severity" options={enums?.severities ?? []} params={params} onChange={setFilter} />
         </Field>
+        {isAdmin && (
+          <Field label="Assignee">
+            <MultiSelect
+              label="Assignee"
+              allLabel="All assignees"
+              values={(params.get('assignee') ?? '').split(',').filter(Boolean)}
+              options={(staff ?? []).map((a) => ({ value: a.id, label: a.role === 'admin' ? `${a.fullName} (admin)` : a.fullName }))}
+              onChange={(ids) => setFilter('assignee', ids.join(','))}
+            />
+          </Field>
+        )}
         <Field label="Created">
           <TimeRangePicker value={range} onChange={setRange} />
         </Field>
@@ -189,10 +203,10 @@ function TicketTable({ tickets, showRequester, unreadIds }: { tickets: Ticket[];
       <table className="table">
         <thead>
           <tr>
-            <th>Ticket</th>
+            <th className="col-ticket">Ticket</th>
             <th>Subject</th>
-            <th>Status</th>
-            <th>Severity</th>
+            <th className="col-status">Status</th>
+            <th className="col-severity">Severity</th>
             <th>Type</th>
             {showRequester && <th>Requester</th>}
             <th>Assignee</th>
@@ -202,13 +216,13 @@ function TicketTable({ tickets, showRequester, unreadIds }: { tickets: Ticket[];
         <tbody>
           {tickets.map((t) => (
             <tr key={t.id} className={unreadIds.has(t.id) ? 'row-unread' : ''}>
-              <td>
+              <td className="col-ticket">
                 {unreadIds.has(t.id) && <UnreadDot />}
                 <Link to={`/tickets/${t.ticketNumber}`}>{t.ticketNumber}</Link>
               </td>
               <td>{t.subject}</td>
-              <td><StatusBadge status={t.status} /></td>
-              <td><SeverityBadge severity={t.severity} /></td>
+              <td className="col-status"><StatusBadge status={t.status} /></td>
+              <td className="col-severity"><SeverityBadge severity={t.severity} /></td>
               <td>{humanize(t.type)}</td>
               {showRequester && <td>{t.requester.name}</td>}
               <td>{t.assignee?.name ?? '—'}</td>

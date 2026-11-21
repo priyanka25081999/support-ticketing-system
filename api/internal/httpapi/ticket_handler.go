@@ -48,6 +48,7 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		Status:      listParam(q, "status"),
 		Type:        listParam(q, "type"),
 		Severity:    listParam(q, "severity"),
+		AssigneeIDs: listParam(q, "assignee"),
 		Search:      q.Get("search"),
 		Sort:        q.Get("sort"),
 		Page:        page,

@@ -159,7 +159,7 @@ export function NotFoundPage() {
   return (
     <div className="center">
       <h2>Page not found</h2>
-      <Link to="/dashboard">Go to dashboard</Link>
+      <Link to="/home">Go to home</Link>
     </div>
   );
 }

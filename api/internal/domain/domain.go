@@ -149,9 +149,11 @@ type TimelineItem struct {
 // TicketFilter holds list filters. RequesterID/AssigneeID scope results by role.
 type TicketFilter struct {
 	// Multi-select filters: a ticket matches if its value is any of the listed ones.
-	Status      []string
-	Type        []string
-	Severity    []string
+	Status   []string
+	Type     []string
+	Severity []string
+	// AssigneeIDs filters by assignee (admin only; ignored for other roles).
+	AssigneeIDs []string
 	Search      string
 	Sort        string // newest | oldest | updated | severity
 	Page        int

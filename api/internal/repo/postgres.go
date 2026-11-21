@@ -256,6 +256,9 @@ func buildWhere(f domain.TicketFilter) (string, []any) {
 	if len(f.Severity) > 0 {
 		add("t.severity::text = ANY(?::text[])", f.Severity)
 	}
+	if len(f.AssigneeIDs) > 0 {
+		add("t.assignee_id::text = ANY(?::text[])", f.AssigneeIDs)
+	}
 	if f.Search != "" {
 		// Matches ticket number, subject or type ("feature request" matches feature_request).
 		add("(t.subject ILIKE ? OR t.ticket_number ILIKE ? OR replace(t.type::text, '_', ' ') ILIKE ?)", "%"+escapeLike(f.Search)+"%")

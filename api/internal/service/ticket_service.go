@@ -108,6 +108,9 @@ func (s *TicketService) List(ctx context.Context, actor domain.Actor, f domain.T
 	if err := validateFilter(&f); err != nil {
 		return domain.Page[domain.Ticket]{}, err
 	}
+	if actor.Role != domain.RoleAdmin {
+		f.AssigneeIDs = nil // only admins can filter by assignee; others are already scoped
+	}
 	applyScope(actor, &f)
 	items, total, err := s.repo.ListTickets(ctx, f)
 	if err != nil {

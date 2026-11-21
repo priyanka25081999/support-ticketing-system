@@ -139,6 +139,8 @@ export interface ChatThread {
 }
 
 export interface TicketFilters {
+  /** Comma-separated assignee ids (admin only). */
+  assignee?: string;
   createdFrom?: string;
   createdTo?: string;
   status?: string;
