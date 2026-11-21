@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Support Desk – Architecture</title>
+<style>
+  :root { --ink:#0f172a; --muted:#475569; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:#f8fafc; }
+  header { padding:24px 32px 8px; }
+  h1 { margin:0 0 4px; font-size:26px; }
+  h2 { margin:32px 0 8px; font-size:20px; }
+  p.sub { margin:0; color:var(--muted); }
+  main { padding:0 32px 40px; }
+  .frame { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:12px; box-shadow:0 1px 3px rgba(15,23,42,.06); }
+  svg { width:100%; height:auto; display:block; }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill:#0f172a; }
+  svg .h { font-weight:700; font-size:15px; }
+  svg .h2 { font-weight:700; font-size:13px; }
+  svg .t { font-size:12px; }
+  svg .s { font-size:11px; fill:#475569; }
+  svg .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11.5px; }
+  .legend { display:flex; flex-wrap:wrap; gap:18px; margin:12px 4px 0; color:var(--muted); font-size:13px; }
+  .legend span::before { content:""; display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; background:var(--c); border:1px solid var(--b); }
+  ol.flow { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 16px 16px 40px; line-height:1.7; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  @media print { body { background:#fff; } .frame { box-shadow:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Support Desk: System Architecture</h1>
+  <p class="sub">React 18 SPA · Vite dev proxy · Go REST API (chi) · PostgreSQL 16 · JWT auth · Live updates via polling + Server-Sent Events</p>
+</header>
+<main>
+
+<div class="frame">
+<svg viewBox="0 0 1500 960" role="img" aria-label="Architecture diagram">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155" />
+    </marker>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0f172a" flood-opacity=".10" />
+    </filter>
+  </defs>
+
+  <!-- ================= USERS ================= -->
+  <rect x="20" y="20" width="330" height="80" rx="12" fill="#eef2ff" stroke="#6366f1" filter="url(#sh)" />
+  <text x="35" y="45" class="h">Users (browser, same Wi-Fi / LAN)</text>
+  <rect x="35" y="58" width="95" height="28" rx="14" fill="#fff" stroke="#6366f1" /><text x="82" y="77" class="t" text-anchor="middle">Customer</text>
+  <rect x="140" y="58" width="95" height="28" rx="14" fill="#fff" stroke="#6366f1" /><text x="187" y="77" class="t" text-anchor="middle">Agent</text>
+  <rect x="245" y="58" width="95" height="28" rx="14" fill="#fff" stroke="#6366f1" /><text x="292" y="77" class="t" text-anchor="middle">Admin</text>
+  <line x1="185" y1="100" x2="185" y2="128" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <!-- ================= BROWSER / SPA ================= -->
+  <rect x="20" y="130" width="330" height="810" rx="14" fill="#f0f9ff" stroke="#0284c7" stroke-width="1.5" filter="url(#sh)" />
+  <text x="35" y="155" class="h">Browser · React 18 + TypeScript SPA</text>
+
+  <rect x="35" y="170" width="300" height="185" rx="10" fill="#fff" stroke="#7dd3fc" />
+  <text x="47" y="190" class="h2">Pages (React Router 6)</text>
+  <text x="47" y="210" class="mono">/login, /register   AuthPages</text>
+  <text x="47" y="228" class="mono">/home               HomePage</text>
+  <text x="47" y="246" class="mono">/dashboard          KPIs·trend·CSV</text>
+  <text x="47" y="264" class="mono">/tickets            List + filters</text>
+  <text x="47" y="282" class="mono">/tickets/:id        Detail + chat</text>
+  <text x="47" y="300" class="mono">/tickets/new        Customer only</text>
+  <text x="47" y="318" class="mono">/agents             Admin only</text>
+  <text x="47" y="342" class="s">Guards: ProtectedRoute(roles) · PublicOnly</text>
+
+  <rect x="35" y="370" width="300" height="165" rx="10" fill="#fff" stroke="#7dd3fc" />
+  <text x="47" y="390" class="h2">Client state</text>
+  <text x="47" y="410" class="t">AuthContext: user + session status</text>
+  <text x="47" y="428" class="t">Access token: in memory only (not localStorage)</text>
+  <text x="47" y="446" class="t">TanStack Query cache (staleTime 5s)</text>
+  <text x="47" y="464" class="t">LiveRefreshProvider: refetchInterval Off…1h</text>
+  <text x="47" y="482" class="t">useNotifications: bell polls every 10s</text>
+  <text x="47" y="500" class="t">useChat: history + live SSE stream</text>
+  <text x="47" y="520" class="s">Filters, page and range live in the URL</text>
+
+  <rect x="35" y="550" width="300" height="150" rx="10" fill="#fff" stroke="#7dd3fc" />
+  <text x="47" y="570" class="h2">Network layer (api/client.ts)</text>
+  <text x="47" y="590" class="t">axios instance → baseURL /api/v1</text>
+  <text x="55" y="608" class="s">• adds Authorization: Bearer &lt;access token&gt;</text>
+  <text x="55" y="626" class="s">• on 401 → POST /auth/refresh → replay request</text>
+  <text x="55" y="644" class="s">• one shared in-flight refresh (no double rotate)</text>
+  <text x="47" y="666" class="t">fetch() SSE reader → /tickets/:id/chat/stream</text>
+  <text x="55" y="684" class="s">• exponential back-off reconnect (max 10s)</text>
+
+  <rect x="35" y="715" width="300" height="110" rx="10" fill="#fff" stroke="#7dd3fc" />
+  <text x="47" y="735" class="h2">Browser storage</text>
+  <text x="47" y="755" class="t">HttpOnly cookie: refresh_token</text>
+  <text x="55" y="773" class="s">Path=/api/v1/auth · SameSite=Lax · 7 days</text>
+  <text x="47" y="795" class="t">localStorage: refresh interval, table/cards view</text>
+  <text x="55" y="813" class="s">(never tokens)</text>
+
+  <rect x="35" y="840" width="300" height="85" rx="10" fill="#fff" stroke="#7dd3fc" />
+  <text x="47" y="860" class="h2">Quality</text>
+  <text x="47" y="880" class="t">Jest + React Testing Library</text>
+  <text x="47" y="898" class="t">TypeScript strict type-check (tsc -b)</text>
+
+  <!-- ================= VITE ================= -->
+  <rect x="400" y="520" width="185" height="190" rx="12" fill="#fefce8" stroke="#ca8a04" stroke-width="1.5" filter="url(#sh)" />
+  <text x="412" y="545" class="h">Vite dev server</text>
+  <text x="412" y="565" class="mono">:5180 (host: true)</text>
+  <text x="412" y="590" class="t">• serves the SPA bundle</text>
+  <text x="412" y="610" class="t">• hot module reload</text>
+  <text x="412" y="630" class="t">• proxy /api → :8080</text>
+  <text x="412" y="655" class="s">Single origin for the browser</text>
+  <text x="412" y="671" class="s">→ no CORS issues, cookie</text>
+  <text x="412" y="687" class="s">   works out of the box</text>
+
+  <line x1="337" y1="615" x2="398" y2="615" stroke="#334155" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+  <text x="368" y="607" class="s" text-anchor="middle">HTTP</text>
+
+  <polyline points="585,560 602,560 602,212 633,212" fill="none" stroke="#334155" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+  <text x="596" y="400" class="s" transform="rotate(-90 596 400)" text-anchor="middle">REST JSON + JWT  ·  SSE stream</text>
+
+  <!-- ================= GO API ================= -->
+  <rect x="620" y="20" width="560" height="920" rx="14" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5" filter="url(#sh)" />
+  <text x="635" y="45" class="h">Go 1.23 REST API · :8080 · chi router</text>
+
+  <rect x="635" y="60" width="530" height="75" rx="10" fill="#fff" stroke="#86efac" />
+  <text x="647" y="80" class="h2">Startup (cmd/server/main.go)</text>
+  <text x="647" y="100" class="t">config.Load(.env) → pgxpool.Connect (10 conns, retries) → golang-migrate Up</text>
+  <text x="647" y="120" class="t">→ EnsureDefaultAdmin (seed) → go runAutoClose() → ListenAndServe (TLS ⇒ HTTP/2)</text>
+
+  <rect x="635" y="150" width="530" height="125" rx="10" fill="#fff" stroke="#86efac" />
+  <text x="647" y="170" class="h2">Middleware chain (httpapi/router.go)</text>
+  <g class="t">
+    <rect x="647" y="180" width="72" height="24" rx="6" fill="#dcfce7" /><text x="683" y="196" text-anchor="middle">RequestID</text>
+    <rect x="725" y="180" width="56" height="24" rx="6" fill="#dcfce7" /><text x="753" y="196" text-anchor="middle">RealIP</text>
+    <rect x="787" y="180" width="60" height="24" rx="6" fill="#dcfce7" /><text x="817" y="196" text-anchor="middle">Logger</text>
+    <rect x="853" y="180" width="88" height="24" rx="6" fill="#dcfce7" /><text x="897" y="196" text-anchor="middle">recoverJSON</text>
+    <rect x="947" y="180" width="98" height="24" rx="6" fill="#dcfce7" /><text x="996" y="196" text-anchor="middle">Timeout 30s*</text>
+    <rect x="1051" y="180" width="100" height="24" rx="6" fill="#dcfce7" /><text x="1101" y="196" text-anchor="middle">CORS</text>
+    <rect x="647" y="212" width="170" height="24" rx="6" fill="#fde68a" /><text x="732" y="228" text-anchor="middle">/auth/*: 30 req/min per IP</text>
+    <rect x="823" y="212" width="190" height="24" rx="6" fill="#bfdbfe" /><text x="918" y="228" text-anchor="middle">Authenticate (JWT HS256)</text>
+    <rect x="1019" y="212" width="132" height="24" rx="6" fill="#bfdbfe" /><text x="1085" y="228" text-anchor="middle">RequireRole (RBAC)</text>
+  </g>
+  <text x="647" y="262" class="s">* the SSE route /chat/stream is exempt from the timeout so it can stay open</text>
+
+  <line x1="900" y1="275" x2="900" y2="288" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="635" y="290" width="530" height="140" rx="10" fill="#fff" stroke="#86efac" />
+  <text x="647" y="310" class="h2">Handlers (HTTP ⇄ JSON)</text>
+  <rect x="650" y="318" width="240" height="82" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="660" y="336" class="h2">AuthHandler</text>
+  <text x="660" y="354" class="s">register · login · refresh · logout</text>
+  <text x="660" y="370" class="s">me · create agent</text>
+  <text x="660" y="388" class="s">sets / clears HttpOnly refresh cookie</text>
+  <rect x="905" y="318" width="245" height="82" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="915" y="336" class="h2">TicketHandler</text>
+  <text x="915" y="354" class="s">tickets · comments · status · assignee</text>
+  <text x="915" y="370" class="s">links · attachments · chat + SSE</text>
+  <text x="915" y="388" class="s">notifications · reports/CSV · agents</text>
+  <text x="647" y="420" class="s">httpx: DecodeJSON (1 MB, unknown fields rejected) · WriteError → {"error":{"code","message"}}</text>
+
+  <line x1="900" y1="430" x2="900" y2="443" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="635" y="445" width="530" height="245" rx="10" fill="#fff" stroke="#86efac" />
+  <text x="647" y="465" class="h2">Services: all business rules live here</text>
+  <rect x="650" y="475" width="160" height="200" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="660" y="494" class="h2">AuthService</text>
+  <text x="660" y="514" class="s">Register / Login</text>
+  <text x="660" y="532" class="s">bcrypt (cost 12)</text>
+  <text x="660" y="550" class="s">JWT access token 15m</text>
+  <text x="660" y="568" class="s">Refresh token 7d,</text>
+  <text x="660" y="584" class="s">  rotated on every use</text>
+  <text x="660" y="602" class="s">Logout → revoke</text>
+  <text x="660" y="620" class="s">Deactivated → 401</text>
+  <text x="660" y="638" class="s">Seed default admin</text>
+  <rect x="825" y="475" width="325" height="200" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="835" y="494" class="h2">TicketService</text>
+  <g class="s">
+    <text x="835" y="514">• Create + auto-assign</text>      <text x="990" y="514">• List (role scoped)</text>
+    <text x="835" y="532">• Status state machine</text>      <text x="990" y="532">• Assign / hand-off</text>
+    <text x="835" y="550">• Comments + internal notes</text> <text x="990" y="550">• Linked tickets</text>
+    <text x="835" y="568">• Attachments (5 MB, ≤10)</text>   <text x="990" y="568">• Notifications feed</text>
+    <text x="835" y="586">• Summary, trend, KPIs</text>      <text x="990" y="586">• CSV export</text>
+    <text x="835" y="604">• Chat hub (pub/sub)</text>        <text x="990" y="604">• Remove agent</text>
+    <text x="835" y="622">• AutoClose (solved &gt; 7 days)</text>
+  </g>
+  <text x="835" y="648" class="s" font-weight="700">loadAccessible(): returns 404 if the user</text>
+  <text x="835" y="664" class="s" font-weight="700">may not see the ticket (no data leak)</text>
+
+  <line x1="900" y1="690" x2="900" y2="703" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="635" y="705" width="530" height="110" rx="10" fill="#fff" stroke="#86efac" />
+  <text x="647" y="725" class="h2">Repository (repo.Repository interface)</text>
+  <rect x="650" y="733" width="165" height="72" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="660" y="752" class="h2">memrepo</text>
+  <text x="660" y="770" class="s">in-memory implementation</text>
+  <text x="660" y="786" class="s">used by unit tests</text>
+  <rect x="830" y="733" width="320" height="72" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="840" y="752" class="h2">Postgres (pgx v5)</text>
+  <text x="840" y="770" class="s">parameterised SQL · InTx() transactions</text>
+  <text x="840" y="786" class="s">whitelisted ORDER BY · driver errors → ErrNotFound/Dup</text>
+
+  <rect x="635" y="830" width="530" height="95" rx="10" fill="#fff" stroke="#86efac" />
+  <text x="647" y="850" class="h2">Background and in-process components</text>
+  <text x="647" y="870" class="t">runAutoClose goroutine: at start, then hourly: solved &gt; 7 days → closed</text>
+  <text x="647" y="888" class="t">chatHub: map ticketID → subscriber channels (fan-out to SSE streams)</text>
+  <text x="647" y="906" class="s">Graceful shutdown on SIGINT/SIGTERM (10s drain)</text>
+
+  <!-- API -> DB -->
+  <line x1="1150" y1="770" x2="1233" y2="770" stroke="#334155" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+  <text x="1200" y="762" class="s" text-anchor="middle">SQL</text>
+
+  <!-- ================= DB ================= -->
+  <rect x="1220" y="20" width="260" height="920" rx="14" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" filter="url(#sh)" />
+  <text x="1235" y="45" class="h">PostgreSQL 16</text>
+  <text x="1235" y="63" class="s">Docker Compose · localhost:5435</text>
+
+  <rect x="1235" y="78" width="230" height="300" rx="10" fill="#fff" stroke="#fdba74" />
+  <text x="1247" y="98" class="h2">Tables</text>
+  <text x="1247" y="120" class="mono">users</text>
+  <text x="1247" y="146" class="mono">refresh_tokens</text>
+  <text x="1247" y="172" class="mono">tickets</text>
+  <text x="1247" y="198" class="mono">ticket_messages</text>
+  <text x="1247" y="224" class="mono">ticket_events</text>
+  <text x="1247" y="250" class="mono">ticket_links</text>
+  <text x="1247" y="276" class="mono">ticket_attachments</text>
+  <text x="1247" y="302" class="mono">ticket_chat_messages</text>
+  <text x="1247" y="328" class="mono">ticket_reads</text>
+  <text x="1247" y="354" class="mono">schema_migrations</text>
+  <g class="s">
+    <text x="1455" y="120" text-anchor="end">citext email</text>
+    <text x="1455" y="146" text-anchor="end">sha256 only</text>
+    <text x="1455" y="172" text-anchor="end">TKT-000001</text>
+    <text x="1455" y="198" text-anchor="end">is_internal</text>
+    <text x="1455" y="224" text-anchor="end">JSONB audit</text>
+    <text x="1455" y="250" text-anchor="end">undirected</text>
+    <text x="1455" y="276" text-anchor="end">BYTEA</text>
+    <text x="1455" y="302" text-anchor="end">1:1 chat</text>
+    <text x="1455" y="328" text-anchor="end">read marks</text>
+    <text x="1455" y="354" text-anchor="end">version</text>
+  </g>
+
+  <rect x="1235" y="393" width="230" height="160" rx="10" fill="#fff" stroke="#fdba74" />
+  <text x="1247" y="413" class="h2">Enum types</text>
+  <text x="1247" y="435" class="mono">user_role</text>
+  <text x="1247" y="453" class="s">customer · agent · admin</text>
+  <text x="1247" y="475" class="mono">ticket_status</text>
+  <text x="1247" y="493" class="s">open · in_progress · on_hold</text>
+  <text x="1247" y="507" class="s">· solved · closed</text>
+  <text x="1247" y="525" class="mono">ticket_type / ticket_severity</text>
+  <text x="1247" y="543" class="mono">event_type</text>
+
+  <rect x="1235" y="568" width="230" height="200" rx="10" fill="#fff" stroke="#fdba74" />
+  <text x="1247" y="588" class="h2">Integrity &amp; performance</text>
+  <text x="1247" y="610" class="s">• Foreign keys, ON DELETE CASCADE</text>
+  <text x="1247" y="628" class="s">• UNIQUE email, ticket_number,</text>
+  <text x="1247" y="644" class="s">   token_hash</text>
+  <text x="1247" y="662" class="s">• Partial unique index: only one</text>
+  <text x="1247" y="678" class="s">   default assignee</text>
+  <text x="1247" y="696" class="s">• CHECK: no self-link, size &gt; 0</text>
+  <text x="1247" y="714" class="s">• Indexes for list, timeline and</text>
+  <text x="1247" y="730" class="s">   report queries</text>
+  <text x="1247" y="748" class="s">• Transactions for multi-row writes</text>
+
+  <rect x="1235" y="783" width="230" height="142" rx="10" fill="#fff" stroke="#fdba74" />
+  <text x="1247" y="803" class="h2">Migrations (golang-migrate)</text>
+  <text x="1247" y="823" class="s">001 init schema</text>
+  <text x="1247" y="841" class="s">002 notify emails + attachments</text>
+  <text x="1247" y="859" class="s">003 notification read state</text>
+  <text x="1247" y="877" class="s">004 chat + report indexes</text>
+  <text x="1247" y="895" class="s">005 soft-delete users</text>
+  <text x="1247" y="913" class="s">006 in_progress / on_hold</text>
+</svg>
+<div class="legend">
+  <span style="--c:#f0f9ff;--b:#0284c7">Frontend (browser)</span>
+  <span style="--c:#fefce8;--b:#ca8a04">Dev server / proxy</span>
+  <span style="--c:#f0fdf4;--b:#16a34a">Backend API</span>
+  <span style="--c:#fff7ed;--b:#ea580c">Database</span>
+  <span style="--c:#bfdbfe;--b:#3b82f6">Security middleware</span>
+  <span style="--c:#fde68a;--b:#ca8a04">Rate limiting</span>
+</div>
+</div>
+
+<h2>Request lifecycle (example: an agent changes a ticket's status)</h2>
+<ol class="flow">
+  <li><b>UI</b>: <code>TicketDetailPage › ActionBar</code> calls <code>ticketsApi.changeStatus(id, "solved")</code> through a TanStack <code>useMutation</code>.</li>
+  <li><b>Axios</b> sends <code>PATCH /api/v1/tickets/{id}/status</code> with <code>Authorization: Bearer &lt;JWT&gt;</code>.</li>
+  <li><b>Vite proxy</b> forwards <code>/api</code> to <code>localhost:8080</code>.</li>
+  <li><b>Middleware</b>: request ID, logging and panic recovery run first, then a 30s timeout and CORS. <code>Authenticate</code> verifies the JWT and puts the <code>Actor</code> (id, role, name) on the request context.</li>
+  <li><b>Handler</b> <code>TicketHandler.ChangeStatus</code> decodes the JSON body and calls the service.</li>
+  <li><b>Service</b> <code>TicketService.ChangeStatus</code> runs <code>loadAccessible</code> (role-based visibility, otherwise 404), then <code>CheckTransition</code> (state machine plus role rules). In one transaction it updates <code>tickets.status / solved_at</code> and inserts a <code>ticket_events</code> row.</li>
+  <li><b>Repository</b> runs parameterised SQL through the pgx pool. Postgres commits.</li>
+  <li><b>Response</b>: the updated ticket comes back as JSON. The UI calls <code>invalidateQueries</code> for ticket, timeline, list, summary and notifications, which refetch immediately. Other users see the change on their next poll (default 10s).</li>
+</ol>
+
+<h2>Data model</h2>
+<div class="frame">
+<svg viewBox="0 0 1200 640" role="img" aria-label="Entity relationship diagram">
+  <g fill="none" stroke="#94a3b8" stroke-width="1.6">
+    <line x1="600" y1="195" x2="600" y2="260" />
+    <line x1="720" y1="90" x2="880" y2="90" />
+    <line x1="480" y1="90" x2="300" y2="85" />
+    <line x1="300" y1="120" x2="460" y2="290" />
+    <line x1="460" y1="330" x2="290" y2="285" />
+    <line x1="460" y1="420" x2="290" y2="455" />
+    <line x1="740" y1="330" x2="910" y2="285" />
+    <line x1="740" y1="420" x2="910" y2="450" />
+    <line x1="600" y1="475" x2="600" y2="530" />
+  </g>
+  <g class="s">
+    <text x="608" y="225">requester_id, assignee_id (N:1)</text>
+    <text x="800" y="82" text-anchor="middle">1 : N</text>
+    <text x="390" y="78" text-anchor="middle">1 : N</text>
+    <text x="608" y="508">2 tickets per link</text>
+  </g>
+
+  <g>
+    <rect x="480" y="20" width="240" height="175" rx="10" fill="#eef2ff" stroke="#6366f1" />
+    <text x="492" y="42" class="h2">users</text>
+    <text x="492" y="64" class="mono">id UUID PK</text>
+    <text x="492" y="82" class="mono">email CITEXT UNIQUE</text>
+    <text x="492" y="100" class="mono">password_hash (bcrypt)</text>
+    <text x="492" y="118" class="mono">full_name, role</text>
+    <text x="492" y="136" class="mono">is_default_assignee</text>
+    <text x="492" y="154" class="mono">notifications_read_at</text>
+    <text x="492" y="172" class="mono">deactivated_at, created_at</text>
+
+    <rect x="880" y="30" width="240" height="120" rx="10" fill="#f1f5f9" stroke="#64748b" />
+    <text x="892" y="52" class="h2">refresh_tokens</text>
+    <text x="892" y="74" class="mono">id PK, user_id FK</text>
+    <text x="892" y="92" class="mono">token_hash UNIQUE (sha256)</text>
+    <text x="892" y="110" class="mono">expires_at</text>
+    <text x="892" y="128" class="mono">revoked</text>
+
+    <rect x="60" y="30" width="240" height="110" rx="10" fill="#f1f5f9" stroke="#64748b" />
+    <text x="72" y="52" class="h2">ticket_reads</text>
+    <text x="72" y="74" class="mono">(user_id, ticket_id) PK</text>
+    <text x="72" y="92" class="mono">read_at</text>
+    <text x="72" y="116" class="s">per-ticket "seen" watermark</text>
+
+    <rect x="460" y="260" width="280" height="215" rx="10" fill="#ecfdf5" stroke="#16a34a" />
+    <text x="472" y="282" class="h2">tickets</text>
+    <text x="472" y="304" class="mono">id UUID PK</text>
+    <text x="472" y="322" class="mono">ticket_number 'TKT-000001'</text>
+    <text x="472" y="340" class="mono">subject, description</text>
+    <text x="472" y="358" class="mono">type, severity, status (enums)</text>
+    <text x="472" y="376" class="mono">requester_id FK → users</text>
+    <text x="472" y="394" class="mono">assignee_id  FK → users</text>
+    <text x="472" y="412" class="mono">notify_emails TEXT[]</text>
+    <text x="472" y="430" class="mono">created_at, updated_at</text>
+    <text x="472" y="448" class="mono">solved_at</text>
+
+    <rect x="40" y="220" width="250" height="130" rx="10" fill="#fff7ed" stroke="#ea580c" />
+    <text x="52" y="242" class="h2">ticket_messages</text>
+    <text x="52" y="264" class="mono">id PK, ticket_id FK</text>
+    <text x="52" y="282" class="mono">author_id FK → users</text>
+    <text x="52" y="300" class="mono">body</text>
+    <text x="52" y="318" class="mono">is_internal (staff only)</text>
+    <text x="52" y="336" class="mono">created_at</text>
+
+    <rect x="40" y="390" width="250" height="130" rx="10" fill="#fff7ed" stroke="#ea580c" />
+    <text x="52" y="412" class="h2">ticket_events (audit log)</text>
+    <text x="52" y="434" class="mono">id BIGSERIAL, ticket_id FK</text>
+    <text x="52" y="452" class="mono">actor_id (NULL = system)</text>
+    <text x="52" y="470" class="mono">type: created | assigned |</text>
+    <text x="52" y="488" class="mono">  status_changed | linked</text>
+    <text x="52" y="506" class="mono">data JSONB {from,to,...}</text>
+
+    <rect x="910" y="220" width="250" height="130" rx="10" fill="#fff7ed" stroke="#ea580c" />
+    <text x="922" y="242" class="h2">ticket_attachments</text>
+    <text x="922" y="264" class="mono">id PK, ticket_id FK</text>
+    <text x="922" y="282" class="mono">uploader_id FK → users</text>
+    <text x="922" y="300" class="mono">file_name, content_type</text>
+    <text x="922" y="318" class="mono">size_bytes CHECK &gt; 0</text>
+    <text x="922" y="336" class="mono">data BYTEA</text>
+
+    <rect x="910" y="390" width="250" height="120" rx="10" fill="#fff7ed" stroke="#ea580c" />
+    <text x="922" y="412" class="h2">ticket_chat_messages</text>
+    <text x="922" y="434" class="mono">id PK, ticket_id FK</text>
+    <text x="922" y="452" class="mono">sender_id FK → users</text>
+    <text x="922" y="470" class="mono">body (≤ 2000 chars)</text>
+    <text x="922" y="488" class="mono">created_at</text>
+
+    <rect x="460" y="530" width="280" height="95" rx="10" fill="#f1f5f9" stroke="#64748b" />
+    <text x="472" y="552" class="h2">ticket_links</text>
+    <text x="472" y="574" class="mono">(ticket_id, linked_ticket_id) PK</text>
+    <text x="472" y="592" class="mono">relation, created_at</text>
+    <text x="472" y="610" class="mono">CHECK ticket_id &lt;&gt; linked_id</text>
+  </g>
+</svg>
+</div>
+
+</main>
+</body>
+</html>

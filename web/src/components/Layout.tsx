@@ -28,6 +28,7 @@ export function Layout() {
           {user.role === 'admin' && <NavLink to="/agents">Agents</NavLink>}
         </nav>
         <div className="user-box">
+          <span className="powered-by">⚡ Powered by Zendesk</span>
           <NotificationBell />
           <span>
             {user.fullName} <span className="badge">{humanize(user.role)}</span>

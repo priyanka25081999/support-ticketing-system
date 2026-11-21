@@ -67,9 +67,8 @@ export function HomePage() {
     <div className="home">
       <section className="hero">
         <div className="hero-text">
-          <span className="hero-wave" aria-hidden="true">👋</span>
           <h1>
-            {greeting(new Date().getHours())}, {firstName}!
+            {greeting(new Date().getHours())}, {firstName}!<span className="hero-wave" aria-hidden="true">👋</span>
           </h1>
           <p className="hero-title">Welcome to Support Desk ✨</p>
           <p className="hero-sub">{TAGLINE[user.role]}</p>
